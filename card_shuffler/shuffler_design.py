@@ -3,8 +3,9 @@
 How it works (see README.md for pictures):
 
 * The deck is dropped, short edge down, into a COLLAR at the top.
-* Under the collar is a COMB of thin vertical blades.  The blade tips form a
-  chevron (centre tip highest) so the deck is split one blade at a time.
+* Under the collar is a COMB of thin vertical blades that slices the deck
+  into packets of about seven cards.  The blade tips form a chevron (one
+  centre tip highest) so the deck is split one blade at a time.
 * Each CHANNEL between two blades has a sloping floor (RAMP).  Ramps
   alternate: left, right, left, right...  A packet of cards free-falls one card
   height, lands on its ramp, tips over onto its short edge and slides out
@@ -20,6 +21,7 @@ Everything is a flat extrusion so it prints without supports:
     bar        square tie bar with a slot for ...
     wedge      ... a tapered key that clamps the whole stack (no screws)
     foot       cross-lapped outrigger so the tower cannot tip
+    hopper     sits on the rim and holds the deck upright while it is released
 
 Frame used in this file:  x = across the card face, z = up, w = depth (the
 direction the cards are stacked in).  2-D outlines are lists of (x, z).
@@ -44,10 +46,11 @@ class Params:
 
     # --- the comb --------------------------------------------------------
     n_channels: int = 14          # must be even: half go left, half right
-    channel_w: float = 3.5        # gap between blades (about 5 cards)
-    blade_t: float = 1.2
-    tip_land: float = 0.4         # width of the blade tip (one nozzle line)
-    bevel_h: float = 3.0          # height over which a blade tapers to its tip
+    channel_w: float = 4.2        # gap between blades
+    blade_t: float = 0.8          # thin on purpose: the physics test shows thick blades fan the
+                                  # deck out until the tilted cards lock in the slots
+    tip_land: float = 0.2         # width of the blade tip: a single layer
+    bevel_h: float = 2.0          # height over which a blade tapers to its tip
     chevron_step: float = 3.5     # each blade's tip is this much lower than its inner neighbour
     roof_deg: float = 12.0        # blade top slopes away from a central peak
     tip_guard: float = 6.0        # highest tip sits this far below the rim
@@ -68,11 +71,19 @@ class Params:
     bin_gap: float = 0.5          # gap between comb and bin floor
     bin_step: float = 0.6         # bin floor is this much lower than the ramp (no lip)
     floor_t: float = 3.0
-    stop_h: float = 26.0
+    stop_h: float = 60.0          # taller than a card's centre of gravity, or cards vault it
     stop_t: float = 14.0
     wall_h: float = 58.0          # bin side walls, measured square to the floor
     notch_w: float = 28.0         # finger notch
     notch_floor: float = 22.0
+
+    # --- the hopper (sits on top, keeps the deck upright) -----------------
+    hopper_h: float = 92.0        # walls all round, with a throat ring at the top
+    throat_clear: float = 6.0     # throat depth = deck thickness + this
+    throat_h: float = 32.0        # the ring holds the top of the deck upright at release; below
+                                  # it the hopper is as deep as the comb so cards can spread
+    hopper_t: float = 2.4
+    tab_h: float = 10.0
 
     # --- structure -------------------------------------------------------
     plate_t: float = 3.0
@@ -117,15 +128,38 @@ class Params:
 
     @property
     def cards_per_channel(self) -> float:
-        return self.channel_w / self.card_pitch
+        """Cards between two neighbouring blade tips = size of a packet."""
+        return self.pitch / self.card_pitch
 
     def side(self, i: int) -> str:
         """Which bin channel i feeds."""
         return "LR"[i % 2]
 
+    def blade_in_front(self, i: int) -> bool:
+        """Slices in the back half carry their blade on the front of the channel.
+
+        Every blade is then on the side of its own channel nearest the centre,
+        every bevel faces outwards, and the two middle blades sit back to back.
+        """
+        return i < self.n_channels // 2
+
+    def blade_w(self, i: int) -> tuple[float, float]:
+        """Depth range occupied by blade i."""
+        w0 = i * self.pitch
+        return (w0 + self.channel_w, w0 + self.pitch) if self.blade_in_front(i) else (w0, w0 + self.blade_t)
+
+    def channel_range(self, i: int) -> tuple[float, float]:
+        w0 = i * self.pitch
+        return (w0, w0 + self.channel_w) if self.blade_in_front(i) else (w0 + self.blade_t, w0 + self.pitch)
+
     def tip_z(self, i: int) -> float:
-        """Height of the peak of blade i (blade i is the back wall of channel i)."""
-        return -self.tip_guard - self.chevron_step * abs(i - self.n_channels / 2)
+        """Height of the peak of blade i: a chevron with a single highest blade.
+
+        The two middle blades sit back to back.  If they were the same height
+        their tips would add up to a flat twice as wide, and the physics test
+        shows a card regularly comes to rest on it, so only one of them leads.
+        """
+        return -self.tip_guard - self.chevron_step * abs(i - self.n_channels // 2)
 
     # ================= derived: outline in x ============================
     @property
@@ -150,7 +184,7 @@ class Params:
     @property
     def collar_h(self) -> float:
         """Deep enough that every blade edge ends inside the collar."""
-        deepest = self.tip_guard + self.chevron_step * self.n_channels / 2
+        deepest = self.tip_guard + self.chevron_step * (self.n_channels // 2)
         return deepest + self.roof_drop + self.bevel_h + 4.0
 
     # ================= derived: heights =================================
@@ -216,7 +250,7 @@ class Params:
 
     @property
     def bin_bar(self) -> Point:
-        return self.bin_pt(self.bin_len + self.stop_t / 2, self.stop_h / 2 - 2.0)
+        return self.bin_pt(self.bin_len + self.stop_t / 2, 11.0)
 
     @property
     def z_base(self) -> float:
@@ -314,6 +348,39 @@ class Params:
         sn = [(L - self.sleeve_w, 0), (L, 0), (L, self.sleeve_h), (L - self.sleeve_w, self.sleeve_h)]
         return [self.bin_pt(s, n, side) for s, n in sn]
 
+    # ---- hopper outlines -------------------------------------------------
+    @property
+    def throat(self) -> float:
+        return self.deck_t + self.throat_clear
+
+    def hopper_end_wz(self, front: bool) -> list[Point]:
+        """Front/back wall of the hopper with the throat ring on top, as (w, z)."""
+        inset = (self.depth - self.throat) / 2
+        top, lo = self.hopper_h, self.hopper_h - self.throat_h
+        pts = [(-self.hopper_t, 0.0), (0.0, 0.0), (0.0, lo), (inset, lo),
+               (inset, top - 2.0), (inset - 2.0, top), (-self.hopper_t, top)]
+        return [(self.depth - w, z) for w, z in pts] if front else pts
+
+    def hopper_return(self, x_sign: int, front: bool) -> tuple[list[Point], float, float]:
+        """Small hook outside an end wall that locates the hopper front-to-back.
+
+        Returns its (x, z) outline and depth range.  It is a 45 degree wedge so
+        it prints without support, and sits outboard of the tie-bar wedges.
+        """
+        out, reach = self.px + self.fit, 3.2
+        pts = [(out + self.hopper_t, 6.0), (out + self.hopper_t, -reach), (out - reach, -reach), (out, 0.0), (out, 6.0)]
+        a, b = self.plate_t + self.fit, self.plate_t + self.fit + self.hopper_t
+        w0, w1 = (self.depth + self.plate_t, self.depth + b) if front else (-b, -self.plate_t)
+        return [(x_sign * x, z) for x, z in pts], w0, w1
+
+    def hopper_side_xz(self, x_sign: int) -> list[Point]:
+        """Side wall: stands on the collar wall and hooks over the tower side."""
+        t, out = self.hopper_t, self.px + self.fit
+        pts = [(self.cx, 0.0), (self.cx, self.hopper_h), (self.cx + t, self.hopper_h),
+               (self.cx + t, 6.0 + (out + t - self.cx - t)), (out + t, 6.0),
+               (out + t, -self.tab_h), (out, -self.tab_h), (out, 0.0)]
+        return [(x_sign * x, z) for x, z in pts]
+
     def landing_card_top(self) -> float:
         """Top of a card at the instant its corner touches the top of a ramp."""
         return self.ramp_z(self.sleeve_w / 2, "L") + self.sleeve_h
@@ -338,33 +405,52 @@ def _square(c: Point, size: float) -> list[Point]:
 
 
 def build_slice(p: Params, i: int):
-    """Blade i plus everything that fills channel i in front of it."""
-    w0 = i * p.pitch
-    w_blade, w1 = w0 + p.blade_t, w0 + p.pitch
+    """Blade i plus everything that fills channel i."""
     side = p.side(i)
     other = "R" if side == "L" else "L"
     exit_sign = -1 if side == "L" else 1
+    wb, w1 = p.blade_t, p.pitch          # local cell: blade first, channel after
 
-    # Blade, tapering to its tip in three terraces (each two 0.2 mm layers).
-    steps = 3
+    # Blade, tapering to its tip in terraces of one 0.2 mm layer each.
+    steps = max(2, round(p.blade_t / p.tip_land))
     body = None
     for k in range(steps):
-        a = w0 + k * p.blade_t / steps
+        a = k * p.blade_t / steps
         lam = _prism(p.blade_outline(i, lower_by=k * p.bevel_h / (steps - 1)), a, a + p.blade_t / steps)
         body = lam if body is None else body.union(lam)
 
-    body = body.union(_prism(p.rib_outline(side), w_blade, w1))
+    body = body.union(_prism(p.rib_outline(side), wb, w1))
     # A short piece of the opposite rib: spacer around the far tie bar.
     x_far = -exit_sign * p.bar_x
-    body = body.union(_prism(p.rib_outline(other, x_far - 8, x_far + 8), w_blade, w1))
-    body = body.union(_prism(p.collar_wall(-exit_sign, full=True), w_blade, w1))
-    body = body.union(_prism(p.collar_wall(exit_sign, full=False), w_blade, w1))
+    body = body.union(_prism(p.rib_outline(other, x_far - 8, x_far + 8), wb, w1))
+    body = body.union(_prism(p.collar_wall(-exit_sign, full=True), wb, w1))
+    body = body.union(_prism(p.collar_wall(exit_sign, full=False), wb, w1))
 
     for c in p.bar_holes():
-        body = body.cut(_prism(_square(c, p.hole), w0 - 1, w1 + 1))
+        body = body.cut(_prism(_square(c, p.hole), -1, w1 + 1))
     # Index mark: when stacked in order the marks form one diagonal line.
     zm = -p.collar_h - 20 - 2.5 * i
-    body = body.cut(_box(p.bx - 1.5, p.bx + 1, zm - 1, zm + 1, w0 - 1, w1 + 1))
+    body = body.cut(_box(p.bx - 1.5, p.bx + 1, zm - 1, zm + 1, -1, w1 + 1))
+    if p.blade_in_front(i):
+        body = body.mirror("XY", (0, 0, p.pitch / 2))
+    return body.translate((0, 0, i * p.pitch))
+
+
+def build_hopper(p: Params):
+    """Four walls and a throat ring; sits on the rim, keeps the deck upright at release."""
+    import cadquery as cq
+    body = None
+    for sg in (-1, 1):
+        side = _prism(p.hopper_side_xz(sg), -p.plate_t, p.depth + p.plate_t)
+        body = side if body is None else body.union(side)
+        for front in (False, True):
+            pts, w0, w1 = p.hopper_return(sg, front)
+            body = body.union(_prism(pts, w0, w1))
+    reach = p.cx + p.hopper_t
+    for front in (False, True):
+        end = (cq.Workplane("YZ").workplane(offset=-reach)
+               .polyline([(z, w) for w, z in p.hopper_end_wz(front)]).close().extrude(2 * reach))
+        body = body.union(end)
     return body
 
 
@@ -452,6 +538,7 @@ def build_parts(p: Params) -> dict:
         parts[f"back_{side}"] = build_back(p, side)
         parts[f"front_{side}"] = build_front(p, side)
         parts[f"foot_{side}"] = build_foot(p, side)
+    parts["hopper"] = build_hopper(p)
     for k, at in enumerate(bar_positions(p)):
         parts[f"bar_{k}"] = build_bar(p, at)
         parts[f"wedge_{k}"] = build_wedge(p, at)
@@ -472,11 +559,16 @@ PRINT_ROTATION = {
     "bar": ((1, 0, 0), 90),     # lie the bar down, slot vertical
     "wedge": ((0, 1, 0), 90),   # flat on its 2 mm face
     "foot": ((0, 1, 0), 90),    # on its side so the lap slots need no bridging
+    "hopper": ((1, 0, 0), -90),  # upside down: throat on the bed, lugs on top
+    "slice_flipped": ((1, 0, 0), 180),  # back-half slices: turn over so the blade is on the bed
 }
 
 
-def as_printed(name: str, solid):
-    rot = PRINT_ROTATION[name.split("_")[0]]
+def as_printed(name: str, solid, p: Params = Params()):
+    kind = name.split("_")[0]
+    if kind == "slice" and p.blade_in_front(int(name.split("_")[1])):
+        kind = "slice_flipped"
+    rot = PRINT_ROTATION[kind]
     if rot:
         solid = solid.rotate((0, 0, 0), rot[0], rot[1])
     bb = solid.val().BoundingBox()
@@ -487,7 +579,7 @@ def print_list(p: Params) -> dict[str, int]:
     """Distinct files to print and how many of each."""
     files = {f"slice_{i:02d}": 1 for i in range(p.n_channels)}
     files.update({"back_L": 1, "back_R": 1, "front_L": 1, "front_R": 1,
-                  "bar": 6, "wedge": 6, "foot": 2})
+                  "bar": 6, "wedge": 6, "foot": 2, "hopper": 1})
     return files
 
 
@@ -498,7 +590,7 @@ def export(p: Params, out_dir: str) -> None:
     parts = build_parts(p)
     canonical = {"bar": "bar_0", "wedge": "wedge_0", "foot": "foot_L"}
     for fname in print_list(p):
-        solid = as_printed(fname, parts[canonical.get(fname, fname)])
+        solid = as_printed(fname, parts[canonical.get(fname, fname)], p)
         cq.exporters.export(solid, os.path.join(out_dir, fname + ".stl"), tolerance=0.02)
     asm = cq.Assembly()
     for name, solid in parts.items():

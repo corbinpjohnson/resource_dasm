@@ -6,13 +6,19 @@ One pass through the machine:
    becomes a row of small *packets*, one per channel.
 2. Channels alternate between a left-sloping and a right-sloping ramp, so
    packets go alternately to the LEFT bin and the RIGHT bin.  Inside each bin
-   the cards keep their relative order.
-3. The user stacks the left pile on the right pile and drops again.
+   the cards keep their relative order...
+3. ...except for *stragglers*.  The card a blade tip lands on is held up for a
+   moment, arrives after the rest of its packet and ends up somewhere else in
+   that packet.  The rigid-body test (physics_sim.py) shows this happening at
+   roughly half the cuts, and it helps: it moves single cards, not clumps.
+4. The user stacks the left pile on the right pile and drops again.
 
-That is an *inverse riffle shuffle* whose "bits" come in clumps of one packet.
-The randomness comes from where the cuts fall, which depends on where in the
-(oversized) collar the deck happened to be released and how tightly it was
-squeezed.
+Without stragglers that is an *inverse riffle shuffle* whose "bits" come in
+clumps of one packet.  The randomness comes from where the cuts fall, which
+depends on where in the hopper throat the deck happened to be released.
+
+The defaults are calibrated against physics_sim.py: packets of seven, and
+about two thirds of neighbouring pairs surviving one drop.
 """
 
 from __future__ import annotations
@@ -25,9 +31,10 @@ from dataclasses import dataclass
 class CombModel:
     """The handful of machine numbers that matter for mixing."""
 
-    cards_per_channel: float = 5.0   # channel_w / card_pitch
-    fill_min: float = 0.6            # loosest a channel fills, as a fraction
+    cards_per_channel: float = 7.1   # blade pitch / card pitch
+    fill_min: float = 0.85           # packets are nearly always full
     pattern: str = "LR"              # bin for successive channels, repeated
+    straggle: float = 0.45           # chance that a cut delays the card it lands on
 
 
 def cut_into_packets(n_cards: int, model: CombModel, rng: random.Random) -> list[int]:
@@ -58,8 +65,13 @@ def one_pass(deck: list[int], model: CombModel, rng: random.Random) -> tuple[lis
     right: list[int] = []
     pos = 0
     for k, size in enumerate(sizes):
+        packet = deck[pos:pos + size]
+        if k > 0 and size > 1 and rng.random() < model.straggle:
+            # the card this blade cut arrives late and lands elsewhere in its packet
+            late = packet.pop(0)
+            packet.insert(rng.randint(1, len(packet)), late)
         side = model.pattern[(start + k) % len(model.pattern)]
-        (left if side == "L" else right).extend(deck[pos:pos + size])
+        (left if side == "L" else right).extend(packet)
         pos += size
     return left, right
 

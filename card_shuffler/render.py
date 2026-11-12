@@ -29,6 +29,7 @@ def section(p: Params, path: str) -> None:
     ax.add_patch(Polygon(p.rib_outline("R"), fc="#3c8d40", ec="k", alpha=0.6))
     for sg in (-1, 1):
         ax.add_patch(Polygon(p.collar_wall(sg, full=(sg == 1)), fc="#777", ec="k"))
+        ax.add_patch(Polygon(p.hopper_side_xz(sg), fc="#c9b8e8", ec="k"))
     for c in p.bar_holes() + [p.bin_bar, (-p.bin_bar[0], p.bin_bar[1])]:
         ax.add_patch(plt.Rectangle((c[0] - 3, c[1] - 3), 6, 6, fc="k"))
     # the deck at the moment of release, and a card landing on a left ramp
@@ -38,7 +39,8 @@ def section(p: Params, path: str) -> None:
     ax.add_patch(plt.Rectangle((-p.sleeve_w / 2, top - p.sleeve_h), p.sleeve_w, p.sleeve_h,
                                fc="none", ec="#b36b00", ls="--"))
     notes = [
-        ("deck dropped in,\nshort edge down", (0, 60), (95, 75)),
+        ("deck dropped in,\nshort edge down", (0, 60), (110, 75)),
+        ("hopper", (p.cx + 1, 50), (110, 45)),
         ("blade tips: chevron,\ncentre blade highest", (0, p.tip_z(mid)), (95, 20)),
         ("collar wall (short on\nthe exit side)", (-p.cx - 6, -8), (-150, 25)),
         ("free fall: one card height,\nso the card can tip over", (-20, top - 40), (-150, -55)),
@@ -51,7 +53,7 @@ def section(p: Params, path: str) -> None:
         ax.annotate(text, xy, xytext, fontsize=9, ha="center",
                     arrowprops=dict(arrowstyle="->", color="#333"))
     ax.set_xlim(-185, 185)
-    ax.set_ylim(p.z_base - 8, 100)
+    ax.set_ylim(p.z_base - 8, 105)
     ax.set_aspect("equal")
     ax.set_xlabel("mm")
     ax.set_title("Section through the comb shuffler (front wall removed)")
@@ -103,7 +105,8 @@ def _rasterise(tris, cols, view_dir, up, px_per_mm=4.0, margin=10):
 def iso(p: Params, path: str) -> None:
     parts = build_parts(p)
     colours = {"slice": "#9ec1e6", "back": "#dcdcdc", "front": "#dcdcdc",
-               "bar": "#555555", "wedge": "#d9534f", "foot": "#777777", "card": "#ffd27f"}
+               "bar": "#555555", "wedge": "#d9534f", "foot": "#777777", "card": "#ffd27f",
+               "hopper": "#c9b8e8"}
     views = [(False, "Assembled", (0.55, -0.35, 0.75)),
              (True, "Front wall removed, a pile in each bin", (0.35, -0.3, 0.9)),
              (True, "From above: the comb", (0.3, -0.8, 0.5))]
@@ -125,7 +128,53 @@ def iso(p: Params, path: str) -> None:
     fig.savefig(path, dpi=110, bbox_inches="tight")
 
 
+def physics_frames(p: Params, path: str, seed: int = 1, times=(0.03, 0.10, 0.20, 0.35, 0.60, 1.50)) -> None:
+    """Snapshots of one simulated drop: front view above, side view below."""
+    import random
+    import mujoco
+    from physics_sim import MM, Rig
+    rig = Rig(p)
+    rig.drop(list(range(rig.n)), random.Random(seed), max_time=0.0)     # just places the deck
+    d = rig.data
+    hx, hz = p.sleeve_w / 2, p.sleeve_h / 2
+    outline = np.array([[-hx, 0, -hz], [hx, 0, -hz], [hx, 0, hz], [-hx, 0, hz], [-hx, 0, -hz]])
+    fig, axes = plt.subplots(2, len(times), figsize=(4.2 * len(times), 10))
+    for j, t in enumerate(times):
+        while d.time < t:
+            mujoco.mj_step(rig.model, d)
+        front, side = axes[0][j], axes[1][j]
+        for s_ in "LR":
+            front.add_patch(Polygon(p.bin_floor_outline(s_), fc="#888"))
+            front.add_patch(Polygon(p.rib_outline(s_), fc="none", ec="#d9534f" if s_ == "L" else "#3c8d40"))
+        front.add_patch(Polygon(p.blade_outline(p.n_channels // 2), fc="none", ec="#2a5d9f"))
+        for sg in (-1, 1):
+            front.add_patch(Polygon(p.hopper_side_xz(sg), fc="#c9b8e8"))
+        for i in range(p.n_channels):
+            a, b = p.blade_w(i)
+            side.plot([a, a, b, b], [p.z_lo, p.tip_z(i), p.tip_z(i), p.z_lo], color="#2a5d9f", lw=0.5)
+        for fr in (False, True):
+            side.add_patch(Polygon(p.hopper_end_wz(fr), fc="#c9b8e8"))
+        side.axvline(0, color="k", lw=0.8)
+        side.axvline(p.depth, color="k", lw=0.8)
+        for c in range(rig.n):
+            pts = outline @ d.xmat[c + 1].reshape(3, 3).T + d.xpos[c + 1] / MM
+            col = plt.cm.viridis(c / rig.n)
+            front.plot(pts[:, 0], pts[:, 2], color=col, lw=0.6)
+            side.plot(pts[:, 1], pts[:, 2], color=col, lw=0.6)
+        front.set_title(f"t = {t:.2f} s   front")
+        side.set_title("side (colour = position in deck)")
+        for ax, xl in ((front, (-165, 165)), (side, (-25, p.depth + 25))):
+            ax.set_xlim(*xl)
+            ax.set_ylim(p.z_base - 5, 105)
+            ax.set_aspect("equal")
+            ax.set_xticks([])
+            ax.set_yticks([])
+    fig.suptitle("One simulated drop of 60 rigid cards (MuJoCo)")
+    fig.savefig(path, dpi=80, bbox_inches="tight")
+
+
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "."
     section(Params(), f"{out}/section.png")
     iso(Params(), f"{out}/assembly.png")
+    physics_frames(Params(), f"{out}/physics.png")
