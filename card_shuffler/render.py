@@ -136,8 +136,15 @@ def physics_frames(p: Params, path: str, seed: int = 1, times=(0.03, 0.10, 0.20,
     rig = Rig(p)
     rig.drop(list(range(rig.n)), random.Random(seed), max_time=0.0)     # just places the deck
     d = rig.data
+    first = rig.model.nbody - rig.n                                     # card bodies come last
     hx, hz = p.sleeve_w / 2, p.sleeve_h / 2
     outline = np.array([[-hx, 0, -hz], [hx, 0, -hz], [hx, 0, hz], [-hx, 0, hz], [-hx, 0, -hz]])
+    c, mid = p.depth / 2, p.n_channels // 2
+
+    def fan_line(steps, z):
+        """Depth of the fan plane `steps` out from the centre, at height z."""
+        return c + (p.fan_R - z) * np.tan(steps * p.fan_delta) if p.fan_R > 0 else c + steps * p.pitch
+
     fig, axes = plt.subplots(2, len(times), figsize=(4.2 * len(times), 10))
     for j, t in enumerate(times):
         while d.time < t:
@@ -146,24 +153,25 @@ def physics_frames(p: Params, path: str, seed: int = 1, times=(0.03, 0.10, 0.20,
         for s_ in "LR":
             front.add_patch(Polygon(p.bin_floor_outline(s_), fc="#888"))
             front.add_patch(Polygon(p.rib_outline(s_), fc="none", ec="#d9534f" if s_ == "L" else "#3c8d40"))
-        front.add_patch(Polygon(p.blade_outline(p.n_channels // 2), fc="none", ec="#2a5d9f"))
+        front.add_patch(Polygon(p.blade_outline(mid), fc="none", ec="#2a5d9f"))
         for sg in (-1, 1):
             front.add_patch(Polygon(p.hopper_side_xz(sg), fc="#c9b8e8"))
-        for i in range(p.n_channels):
-            a, b = p.blade_w(i)
-            side.plot([a, a, b, b], [p.z_lo, p.tip_z(i), p.tip_z(i), p.z_lo], color="#2a5d9f", lw=0.5)
+        for steps in range(-mid, p.n_channels - mid + 1):
+            i = min(max(steps + mid - (1 if steps <= 0 else 0), 0), p.n_channels - 1)
+            top = 0.0 if abs(steps) == mid else p.tip_z(i)
+            zs = np.array([top, p.z_base])
+            side.plot(fan_line(steps, zs), zs, color="k" if abs(steps) == mid else "#2a5d9f",
+                      lw=0.9 if abs(steps) == mid else 0.5)
         for fr in (False, True):
             side.add_patch(Polygon(p.hopper_end_wz(fr), fc="#c9b8e8"))
-        side.axvline(0, color="k", lw=0.8)
-        side.axvline(p.depth, color="k", lw=0.8)
-        for c in range(rig.n):
-            pts = outline @ d.xmat[c + 1].reshape(3, 3).T + d.xpos[c + 1] / MM
-            col = plt.cm.viridis(c / rig.n)
+        for k in range(rig.n):
+            pts = outline @ d.xmat[first + k].reshape(3, 3).T + d.xpos[first + k] / MM
+            col = plt.cm.viridis(k / rig.n)
             front.plot(pts[:, 0], pts[:, 2], color=col, lw=0.6)
             side.plot(pts[:, 1], pts[:, 2], color=col, lw=0.6)
         front.set_title(f"t = {t:.2f} s   front")
         side.set_title("side (colour = position in deck)")
-        for ax, xl in ((front, (-165, 165)), (side, (-25, p.depth + 25))):
+        for ax, xl in ((front, (-165, 165)), (side, (c - 85, c + 85))):
             ax.set_xlim(*xl)
             ax.set_ylim(p.z_base - 5, 105)
             ax.set_aspect("equal")

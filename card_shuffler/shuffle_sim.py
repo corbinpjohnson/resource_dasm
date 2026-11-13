@@ -7,18 +7,19 @@ One pass through the machine:
 2. Channels alternate between a left-sloping and a right-sloping ramp, so
    packets go alternately to the LEFT bin and the RIGHT bin.  Inside each bin
    the cards keep their relative order...
-3. ...except for *stragglers*.  The card a blade tip lands on is held up for a
-   moment, arrives after the rest of its packet and ends up somewhere else in
-   that packet.  The rigid-body test (physics_sim.py) shows this happening at
-   roughly half the cuts, and it helps: it moves single cards, not clumps.
+3. ...except for the odd *straggler*: a card held up for a moment on a blade
+   tip arrives after the rest of its packet and ends up elsewhere in it.
+   Earlier versions of the comb did this at about half the cuts, which mixed
+   the deck faster but was also where the jams came from.  The current comb
+   rarely does it.
 4. The user stacks the left pile on the right pile and drops again.
 
 Without stragglers that is an *inverse riffle shuffle* whose "bits" come in
 clumps of one packet.  The randomness comes from where the cuts fall, which
 depends on where in the hopper throat the deck happened to be released.
 
-The defaults are calibrated against physics_sim.py: packets of seven, and
-about two thirds of neighbouring pairs surviving one drop.
+The defaults are calibrated against physics_sim.py: packets of seven, about
+85% of neighbouring pairs surviving one drop and about 10% surviving twelve.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ class CombModel:
     cards_per_channel: float = 7.1   # blade pitch / card pitch
     fill_min: float = 0.85           # packets are nearly always full
     pattern: str = "LR"              # bin for successive channels, repeated
-    straggle: float = 0.45           # chance that a cut delays the card it lands on
+    straggle: float = 0.10           # chance that a cut delays the card it lands on
 
 
 def cut_into_packets(n_cards: int, model: CombModel, rng: random.Random) -> list[int]:

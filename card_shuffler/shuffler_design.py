@@ -2,30 +2,41 @@
 
 How it works (see README.md for pictures):
 
-* The deck is dropped, short edge down, into a COLLAR at the top.
-* Under the collar is a COMB of thin vertical blades that slices the deck
-  into packets of about seven cards.  The blade tips form a chevron (one
-  centre tip highest) so the deck is split one blade at a time.
+* The deck is dropped, short edge down, into a HOPPER whose throat ring holds
+  it upright.
+* Under it is a COMB of thin blades that slices the deck into packets of
+  about seven cards.  Three things about the comb were forced by the physics
+  test (physics_sim.py) and none of them is optional:
+    - the blades are arranged like the ribs of a FAN, hinged far above the
+      rim, so the card bottoms can spread by the total thickness of the
+      blades while the tops stay together, and every channel gets wider on
+      the way down;
+    - each blade TAPERS from a one-layer tip to full thickness slowly enough
+      that its channel never narrows: whatever the tips let in can fall;
+    - the tips form a CHEVRON with one centre blade highest, so the deck is
+      split one blade at a time.
 * Each CHANNEL between two blades has a sloping floor (RAMP).  Ramps
-  alternate: left, right, left, right...  A packet of cards free-falls one card
-  height, lands on its ramp, tips over onto its short edge and slides out
-  sideways.
+  alternate: left, right, left, right...  A packet free-falls one card height,
+  lands on its ramp, tips over onto its short edge and slides out sideways.
 * Two tilted BINS catch the left-going and right-going cards.
 * Stack one pile on the other and drop again.
 
-Everything is a flat extrusion so it prints without supports:
+Every part prints flat without supports:
 
-    slice_NN   blade + ramp rib + spacers, one per channel (printed flat)
-    back_L/R   back wall with bin floor and end stop growing out of it
-    front_L/R  front wall
-    bar        square tie bar with a slot for ...
+    slice_NN   blade + ramp rib + spacers, one per channel; the spacers are
+               slightly wedge-shaped, which is what builds the fan
+    back_L/R   half of an end wall with half of a bin floor and end stop
+    front_L/R  the mirror images
+    bar_*      square tie bars (three lengths) with a slot for ...
     wedge      ... a tapered key that clamps the whole stack (no screws)
     foot       cross-lapped outrigger so the tower cannot tip
     hopper     sits on the rim and holds the deck upright while it is released
+    jam_key    a stick for pushing a stuck card down its channel
 
-Frame used in this file:  x = across the card face, z = up, w = depth (the
-direction the cards are stacked in).  2-D outlines are lists of (x, z).
-CadQuery is only needed for `build_parts`; all the numbers work without it.
+Frame used in this file:  x = across the card face, z = up (0 at the rim),
+w = depth (the direction the cards are stacked in).  2-D outlines are lists
+of (x, z).  CadQuery is only needed for `build_parts`; all the numbers work
+without it.
 """
 
 from __future__ import annotations
@@ -45,15 +56,22 @@ class Params:
     n_cards: int = 60
 
     # --- the comb --------------------------------------------------------
-    n_channels: int = 14          # must be even: half go left, half right
-    channel_w: float = 4.2        # gap between blades
-    blade_t: float = 0.8          # thin on purpose: the physics test shows thick blades fan the
-                                  # deck out until the tilted cards lock in the slots
+    n_channels: int = 12          # must be even: half go left, half right.  No more than the
+                                  # deck needs: a narrower collar limits how far a deck can lean
+    channel_w: float = 4.0        # gap between blades at the rim, below the taper
+    blade_t: float = 1.0          # full thickness, reached only well down the blade
     tip_land: float = 0.2         # width of the blade tip: a single layer
-    bevel_h: float = 2.0          # height over which a blade tapers to its tip
+    bevel_h: float = 110.0        # height over which a blade thickens from tip to full.  With
+                                  # the fan this keeps every channel widening all the way down
     chevron_step: float = 3.5     # each blade's tip is this much lower than its inner neighbour
-    roof_deg: float = 12.0        # blade top slopes away from a central peak
+    roof_deg: float = 12.0        # (rake_deg = 0 only) blade top slopes away from a central peak
+    rake_deg: float = 0.0         # blade top is one straight slope across the card, alternate
+                                  # blades sloping opposite ways, so each blade enters the deck
+                                  # from one side like a scissor instead of all along its length
     tip_guard: float = 6.0        # highest tip sits this far below the rim
+    fan_R: float = 400.0          # 0: blades parallel.  Otherwise the blades are tilted like the
+                                  # ribs of a fan whose hinge is this far above the rim, so every
+                                  # channel gets wider on the way down
 
     # --- the path of a card ----------------------------------------------
     side_clear: float = 1.5       # collar clearance each side of the card
@@ -71,7 +89,10 @@ class Params:
     bin_gap: float = 0.5          # gap between comb and bin floor
     bin_step: float = 0.6         # bin floor is this much lower than the ramp (no lip)
     floor_t: float = 3.0
-    stop_h: float = 60.0          # taller than a card's centre of gravity, or cards vault it
+    stop_h: float = 26.0          # the solid block the bin tie bar passes through
+    fence_h: float = 96.0         # thin fence above it, taller than a card: a deck dropped from
+                                  # the top of the hopper sends cards over anything lower
+    fence_t: float = 3.0
     stop_t: float = 14.0
     wall_h: float = 58.0          # bin side walls, measured square to the floor
     notch_w: float = 28.0         # finger notch
@@ -80,9 +101,16 @@ class Params:
     # --- the hopper (sits on top, keeps the deck upright) -----------------
     hopper_h: float = 92.0        # walls all round, with a throat ring at the top
     throat_clear: float = 6.0     # throat depth = deck thickness + this
+    tube_clear: float = 6.0       # below the ring the hopper is this much deeper than the throat:
+                                  # tight enough that the deck cannot lean more than about 4 degrees
     throat_h: float = 32.0        # the ring holds the top of the deck upright at release; below
                                   # it the hopper is as deep as the comb so cards can spread
     hopper_t: float = 2.4
+    hopper_lean_deg: float = 4.0  # the hopper leans back, so the deck does: cards then meet the
+                                  # blades one side first and none is left balanced on a tip
+    finger_slot: float = 54.0     # depth of the slots in the hopper sides, for lowering the deck
+                                  # in by its edges (holding it by its faces squeezes it tight)
+    post_w: float = 9.0           # width of the corner posts left beside each slot
     tab_h: float = 10.0
 
     # --- structure -------------------------------------------------------
@@ -100,7 +128,7 @@ class Params:
     foot_x: float = 85.0
     foot_w: float = 10.0
     foot_h: float = 12.0
-    foot_out: float = 30.0        # how far a foot sticks out front and back
+    foot_out: float = 20.0        # how far a foot sticks out front and back
     ground: float = 3.0
 
     # --- the printer -----------------------------------------------------
@@ -130,6 +158,43 @@ class Params:
     def cards_per_channel(self) -> float:
         """Cards between two neighbouring blade tips = size of a packet."""
         return self.pitch / self.card_pitch
+
+    # ---- the fan ---------------------------------------------------------
+    @property
+    def fan_delta(self) -> float:
+        """Angle between neighbouring blades, radians (0 when parallel)."""
+        return self.pitch / self.fan_R if self.fan_R > 0 else 0.0
+
+    def spread(self, z: float) -> float:
+        """How much wider everything is at height z than at the rim."""
+        return 1.0 - z / self.fan_R if self.fan_R > 0 else 1.0
+
+    def channel_at(self, z: float, blade_t: float | None = None) -> float:
+        """Width of a channel at height z (z = 0 at the rim, negative below)."""
+        return self.pitch * self.spread(z) - (self.blade_t if blade_t is None else blade_t)
+
+    def blade_thickness(self, i: int, z: float) -> float:
+        """Thickness of blade i at height z: one layer at its tip, full thickness bevel_h lower."""
+        grown = min(1.0, max(0.0, (self.tip_z(i) - z) / self.bevel_h))
+        return self.tip_land + (self.blade_t - self.tip_land) * grown
+
+    def channel_width(self, i: int, z: float) -> float:
+        """Clear width of the channel beside blade i at height z."""
+        return self.pitch * self.spread(z) - self.blade_thickness(i, z)
+
+    @property
+    def depth_at_base(self) -> float:
+        """Inside depth of the machine at table level (the fan makes it deeper than at the rim)."""
+        return self.depth * self.spread(self.z_base)
+
+    def lane_of(self, w: float, z: float) -> int:
+        """Which channel a point at depth w and height z is in."""
+        c = self.depth / 2
+        if self.fan_R > 0:
+            idx = math.atan2(w - c, self.fan_R - z) / self.fan_delta
+        else:
+            idx = (w - c) / self.pitch
+        return self.n_channels // 2 + math.floor(idx)
 
     def side(self, i: int) -> str:
         """Which bin channel i feeds."""
@@ -177,15 +242,27 @@ class Params:
         """Half-width of a blade below the collar."""
         return self.cx + self.exit_clear
 
+    def blade_top(self, i: int) -> list[Point]:
+        """Top edge of blade i across the collar opening, left to right."""
+        peak = self.tip_z(i)
+        if self.rake_deg > 0:
+            drop = 2 * self.cx * math.tan(math.radians(self.rake_deg))
+            ends = (peak, peak - drop) if i % 2 == 0 else (peak - drop, peak)
+            return [(-self.cx, ends[0]), (self.cx, ends[1])]
+        eave = peak - self.cx * math.tan(math.radians(self.roof_deg))
+        return [(-self.cx, eave), (0.0, peak), (self.cx, eave)]
+
     @property
-    def roof_drop(self) -> float:
-        return self.cx * math.tan(math.radians(self.roof_deg))
+    def top_drop(self) -> float:
+        """How far a blade's top edge falls from its highest to its lowest point."""
+        zs = [z for _, z in self.blade_top(0)]
+        return max(zs) - min(zs)
 
     @property
     def collar_h(self) -> float:
         """Deep enough that every blade edge ends inside the collar."""
-        deepest = self.tip_guard + self.chevron_step * (self.n_channels // 2)
-        return deepest + self.roof_drop + self.bevel_h + 4.0
+        deepest = -min(self.tip_z(i) for i in range(self.n_channels))
+        return deepest + self.top_drop + 6.0
 
     # ================= derived: heights =================================
     @property
@@ -262,31 +339,33 @@ class Params:
 
     @property
     def width(self) -> float:
-        return 2 * max(-self.bin_pt(self.bin_len + self.stop_t, self.wall_h)[0], self.px)
-
-    @property
-    def bar_len(self) -> float:
-        """Shaft length: through both walls and the stack, plus the tail."""
-        return self.depth + 2 * self.plate_t + self.tail
+        corners = [self.bin_pt(self.bin_len + self.stop_t, self.wall_h), self.bin_pt(self.bin_len + self.fence_t, self.fence_h)]
+        return 2 * max(self.px, *(-x for x, _ in corners))
 
     @property
     def wedge_deg(self) -> float:
         return math.degrees(math.atan((self.wedge_wide - self.wedge_narrow) / self.wedge_len))
 
     # ================= 2-D outlines =====================================
-    def blade_outline(self, i: int, lower_by: float = 0.0) -> list[Point]:
-        """Blade i seen face-on.  `lower_by` shaves the roof (used for the bevel)."""
-        peak = self.tip_z(i) - lower_by
-        eave = peak - self.roof_drop
+    def blade_outline(self, i: int) -> list[Point]:
+        """Blade i seen face-on."""
         shoulder = -self.collar_h - (self.px - self.bx)
         bottom = self.z_lo - self.rib_d
-        return [
-            (-self.px, 0.0), (-self.cx, 0.0), (-self.cx, eave), (0.0, peak),
-            (self.cx, eave), (self.cx, 0.0), (self.px, 0.0),
-            (self.px, -self.collar_h), (self.bx, shoulder), (self.bx, bottom),
-            (0.0, self.z_cross - self.rib_d), (-self.bx, bottom),
-            (-self.bx, shoulder), (-self.px, -self.collar_h),
-        ]
+        return [(-self.px, 0.0), (-self.cx, 0.0), *self.blade_top(i), (self.cx, 0.0), (self.px, 0.0),
+                (self.px, -self.collar_h), (self.bx, shoulder), (self.bx, bottom),
+                (0.0, self.z_cross - self.rib_d), (-self.bx, bottom),
+                (-self.bx, shoulder), (-self.px, -self.collar_h)]
+
+    def above_taper_line(self, i: int, lower_by: float) -> list[Point]:
+        """Region removed from an upper layer of blade i: everything above its top edge lowered by `lower_by`.
+
+        The line runs the full width of the blade, ears included, so the face
+        of the blade stays flush.  A step there catches cards as they swing
+        out sideways (it did, in the physics test).
+        """
+        top = [(x, z - lower_by) for x, z in self.blade_top(i)]
+        far = self.px + 5.0
+        return [(-far, 20.0), (-far, top[0][1]), *top, (far, top[-1][1]), (far, 20.0)]
 
     def rib_outline(self, side: str, x0: float | None = None, x1: float | None = None) -> list[Point]:
         """The band of material whose top edge is a ramp (optionally just a piece)."""
@@ -313,17 +392,9 @@ class Params:
         L, t = self.bin_len, self.stop_t
         # The top end is cut plumb so the floor's underside stays clear of the comb.
         plumb = self.floor_t * self.tan_ramp
-        sn = [(0, 0), (L, 0), (L, self.stop_h), (L + t, self.stop_h), (L + t, -self.floor_t), (plumb, -self.floor_t)]
+        sn = [(0, 0), (L, 0), (L, self.fence_h), (L + self.fence_t, self.fence_h), (L + self.fence_t, self.stop_h),
+              (L + t, self.stop_h), (L + t, -self.floor_t), (plumb, -self.floor_t)]
         return [self.bin_pt(s, n, side) for s, n in sn]
-
-    def tenons(self, side: str = "L", grow: float = 0.0) -> list[list[Point]]:
-        """Two tongues on the bin floor that key into the front wall."""
-        out = []
-        for s0 in (0.25 * self.bin_len, 0.65 * self.bin_len):
-            sn = [(s0 - grow, grow), (s0 + 12 + grow, grow),
-                  (s0 + 12 + grow, -self.floor_t - grow), (s0 - grow, -self.floor_t - grow)]
-            out.append([self.bin_pt(s, n, side) for s, n in sn])
-        return out
 
     def wall_outlines(self, side: str = "L") -> list[list[Point]]:
         """Pieces whose union is one half of an end wall."""
@@ -353,25 +424,48 @@ class Params:
     def throat(self) -> float:
         return self.deck_t + self.throat_clear
 
-    def hopper_end_wz(self, front: bool) -> list[Point]:
-        """Front/back wall of the hopper with the throat ring on top, as (w, z)."""
+    @property
+    def tube_inset(self) -> float:
+        """How far the hopper's front and back walls stand inside the comb's."""
+        return max(0.0, (self.depth - self.throat - self.tube_clear) / 2)
+
+    def hopper_shear(self, z: float) -> float:
+        """How far back the leaning hopper has moved at height z (nothing at the rim)."""
+        return -z * math.tan(math.radians(self.hopper_lean_deg))
+
+    def hopper_end_pieces(self, front: bool) -> list[list[Point]]:
+        """Front/back end of the hopper as two convex pieces in (w, z): wall, then throat ring."""
         inset = (self.depth - self.throat) / 2
-        top, lo = self.hopper_h, self.hopper_h - self.throat_h
-        pts = [(-self.hopper_t, 0.0), (0.0, 0.0), (0.0, lo), (inset, lo),
-               (inset, top - 2.0), (inset - 2.0, top), (-self.hopper_t, top)]
-        return [(self.depth - w, z) for w, z in pts] if front else pts
+        top, lo, t = self.hopper_h, self.hopper_h - self.throat_h, self.hopper_t
+        wall = [(-t, 0.0), (self.tube_inset, 0.0), (self.tube_inset, lo), (-t, lo)]
+        ring = [(-t, lo), (inset, lo), (inset, top - 2.0), (inset - 2.0, top), (-t, top)]
+        pieces = [[(self.depth - w, z) for w, z in pc] for pc in (wall, ring)] if front else [wall, ring]
+        return [[(w + self.hopper_shear(z), z) for w, z in pc] for pc in pieces]
+
+    def hopper_end_wz(self, front: bool) -> list[Point]:
+        """Outline of the same thing in one piece."""
+        wall, ring = self.hopper_end_pieces(front)
+        return wall[:3] + ring[1:]
 
     def hopper_return(self, x_sign: int, front: bool) -> tuple[list[Point], float, float]:
-        """Small hook outside an end wall that locates the hopper front-to-back.
+        """Hook on a hopper corner that grips the outside of the tower.
 
         Returns its (x, z) outline and depth range.  It is a 45 degree wedge so
-        it prints without support, and sits outboard of the tie-bar wedges.
+        it prints without support, sits outboard of the tie-bar wedges, and has
+        extra clearance because the end walls lean.
         """
         out, reach = self.px + self.fit, 3.2
         pts = [(out + self.hopper_t, 6.0), (out + self.hopper_t, -reach), (out - reach, -reach), (out, 0.0), (out, 6.0)]
-        a, b = self.plate_t + self.fit, self.plate_t + self.fit + self.hopper_t
-        w0, w1 = (self.depth + self.plate_t, self.depth + b) if front else (-b, -self.plate_t)
+        a, b = self.plate_t + self.fit + 0.5, self.plate_t + self.fit + 0.5 + self.hopper_t
+        w0, w1 = (self.depth + a, self.depth + b) if front else (-b, -a)
         return [(x_sign * x, z) for x, z in pts], w0, w1
+
+    def hopper_lug(self, x_sign: int) -> tuple[float, float, float, float, float, float]:
+        """Strip down the outside of the tower that carries the hooks: (x0, x1, z0, z1, w0, w1)."""
+        out = self.px + self.fit
+        b = self.plate_t + self.fit + 0.5 + self.hopper_t
+        x0, x1 = sorted((x_sign * out, x_sign * (out + self.hopper_t)))
+        return (x0, x1, -self.tab_h, 6.0, -b, self.depth + b)
 
     def hopper_side_xz(self, x_sign: int) -> list[Point]:
         """Side wall: stands on the collar wall and hooks over the tower side."""
@@ -404,44 +498,102 @@ def _square(c: Point, size: float) -> list[Point]:
     return [(c[0] - h, c[1] - h), (c[0] + h, c[1] - h), (c[0] + h, c[1] + h), (c[0] - h, c[1] + h)]
 
 
+# ---- placing things on the fan -------------------------------------------
+# Slices and end walls are modelled lying on the centre plane (w = 0 here) and
+# then moved to their place `steps` blade spacings from the centre: a rotation
+# about the hinge line for a fan comb, a plain shift for a parallel one.
+
+def _place(p: Params, solid, steps: float):
+    c = p.depth / 2
+    solid = solid.translate((0, 0, c))
+    if p.fan_R > 0:
+        return solid.rotate((0, p.fan_R, c), (1, p.fan_R, c), -math.degrees(steps * p.fan_delta))
+    return solid.translate((0, 0, steps * p.pitch))
+
+
+def _unplace(p: Params, solid, steps: float):
+    c = p.depth / 2
+    if p.fan_R > 0:
+        solid = solid.rotate((0, p.fan_R, c), (1, p.fan_R, c), math.degrees(steps * p.fan_delta))
+    else:
+        solid = solid.translate((0, 0, -steps * p.pitch))
+    return solid.translate((0, 0, -c))
+
+
+def _beyond(p: Params, steps: float, thick: float = 500.0):
+    """Everything on the far side of the fan plane `steps` out from the centre (local frame)."""
+    slab = _box(-400, 400, p.z_base - 60, 30, 0, thick)
+    if p.fan_R > 0:
+        return slab.rotate((0, p.fan_R, 0), (1, p.fan_R, 0), -math.degrees(steps * p.fan_delta))
+    return slab.translate((0, 0, steps * p.pitch))
+
+
+def _trim(p: Params, solid):
+    """Cut flush with the rim and the table."""
+    solid = solid.cut(_box(-400, 400, 0, 60, -300, 400))
+    return solid.cut(_box(-400, 400, p.z_base - 80, p.z_base, -300, 400))
+
+
+def slice_steps(p: Params, i: int) -> int:
+    mid = p.n_channels // 2
+    return -(mid - 1 - i) if p.blade_in_front(i) else i - mid
+
+
+def _bar_cut(p: Params, at: Point):
+    return _prism(_square(at, p.hole), -300, 400)
+
+
 def build_slice(p: Params, i: int):
-    """Blade i plus everything that fills channel i."""
+    """Blade i plus everything that fills channel i, in its assembled position."""
     side = p.side(i)
     other = "R" if side == "L" else "L"
     exit_sign = -1 if side == "L" else 1
-    wb, w1 = p.blade_t, p.pitch          # local cell: blade first, channel after
+    thick = p.pitch * p.spread(p.z_base) + 2      # more than the widest the channel gets
 
-    # Blade, tapering to its tip in terraces of one 0.2 mm layer each.
-    steps = max(2, round(p.blade_t / p.tip_land))
-    body = None
-    for k in range(steps):
-        a = k * p.blade_t / steps
-        lam = _prism(p.blade_outline(i, lower_by=k * p.bevel_h / (steps - 1)), a, a + p.blade_t / steps)
-        body = lam if body is None else body.union(lam)
+    # Blade: one 0.2 mm layer at the tip, gaining a layer every so often on the way down.
+    layers = max(2, round(p.blade_t / p.tip_land))
+    outline = p.blade_outline(i)
+    body = _prism(outline, 0.0, p.blade_t / layers)
+    for k in range(1, layers):
+        a = k * p.blade_t / layers
+        lam = _prism(outline, a, a + p.blade_t / layers)
+        body = body.union(lam.cut(_prism(p.above_taper_line(i, k * p.bevel_h / (layers - 1)), a - 1, a + 1)))
 
-    body = body.union(_prism(p.rib_outline(side), wb, w1))
-    # A short piece of the opposite rib: spacer around the far tie bar.
+    # Ramp rib, a short piece of the opposite rib (spacer round the far tie
+    # bar) and the collar walls, all filling the channel up to the next blade.
     x_far = -exit_sign * p.bar_x
-    body = body.union(_prism(p.rib_outline(other, x_far - 8, x_far + 8), wb, w1))
-    body = body.union(_prism(p.collar_wall(-exit_sign, full=True), wb, w1))
-    body = body.union(_prism(p.collar_wall(exit_sign, full=False), wb, w1))
+    fill = [p.rib_outline(side), p.rib_outline(other, x_far - 8, x_far + 8),
+            p.collar_wall(-exit_sign, full=True), p.collar_wall(exit_sign, full=False)]
+    for pts in fill:
+        body = body.union(_prism(pts, 0.0, thick))
+    body = body.cut(_beyond(p, 1))
 
-    for c in p.bar_holes():
-        body = body.cut(_prism(_square(c, p.hole), -1, w1 + 1))
     # Index mark: when stacked in order the marks form one diagonal line.
     zm = -p.collar_h - 20 - 2.5 * i
-    body = body.cut(_box(p.bx - 1.5, p.bx + 1, zm - 1, zm + 1, -1, w1 + 1))
+    body = body.cut(_box(p.bx - 1.5, p.bx + 1, zm - 1, zm + 1, -1, thick))
     if p.blade_in_front(i):
-        body = body.mirror("XY", (0, 0, p.pitch / 2))
-    return body.translate((0, 0, i * p.pitch))
+        body = body.mirror("XY")
+    body = _trim(p, _place(p, body, slice_steps(p, i)))
+    for c in p.bar_holes():
+        body = body.cut(_bar_cut(p, c))
+    return body
 
 
 def build_hopper(p: Params):
-    """Four walls and a throat ring; sits on the rim, keeps the deck upright at release."""
+    """Leaning tube with a throat ring and finger slots; sits on the rim."""
     import cadquery as cq
+    back = min(0.0, p.hopper_shear(p.hopper_h)) - p.hopper_t     # how far the lean carries the top
     body = None
     for sg in (-1, 1):
-        side = _prism(p.hopper_side_xz(sg), -p.plate_t, p.depth + p.plate_t)
+        # The side wall stands on the collar walls only, clear of the tie-bar wedges.
+        side = _prism(p.hopper_side_xz(sg), back, p.depth).union(_box(*p.hopper_lug(sg)))
+        lo, hi = sorted((sg * (p.cx - 1), sg * (p.cx + p.hopper_t + 1)))
+        slot_z = p.hopper_h - p.finger_slot
+        slot = (cq.Workplane("YZ").workplane(offset=lo)
+                .polyline([(slot_z, p.post_w + p.hopper_shear(slot_z)), (slot_z, p.depth - p.post_w + p.hopper_shear(slot_z)),
+                           (p.hopper_h + 1, p.depth - p.post_w + p.hopper_shear(p.hopper_h + 1)),
+                           (p.hopper_h + 1, p.post_w + p.hopper_shear(p.hopper_h + 1))]).close().extrude(hi - lo))
+        side = side.cut(slot)
         body = side if body is None else body.union(side)
         for front in (False, True):
             pts, w0, w1 = p.hopper_return(sg, front)
@@ -451,65 +603,79 @@ def build_hopper(p: Params):
         end = (cq.Workplane("YZ").workplane(offset=-reach)
                .polyline([(z, w) for w, z in p.hopper_end_wz(front)]).close().extrude(2 * reach))
         body = body.union(end)
-    return body
+    # nothing may hang inside the collar or outside the back wall below the rim
+    return body.cut(_box(-p.cx, p.cx, -50, 0, -50, p.depth + 50))
 
 
-def _wall_half(p: Params, side: str, w0: float, w1: float):
-    wall = None
-    for pts in p.wall_outlines(side):
-        piece = _prism(pts, w0, w1)
-        wall = piece if wall is None else wall.union(piece)
-    wall = wall.cut(_prism(p.finger_notch(side), w0 - 1, w1 + 1))
+def build_shell(p: Params, side: str, front: bool):
+    """Half of an end wall, with half of the bin floor and end stop standing on it.
+
+    The four shells are mirror images of each other; the two halves of each
+    bin floor meet on the centre plane.
+    """
     sg = -1 if side == "L" else 1
-    holes = [c for c in p.bar_holes() if c[0] * sg > 0]
+    out = p.n_channels - p.n_channels // 2          # the wall lies on the outermost fan plane
+    tower, bin_wall, skirt = p.wall_outlines(side)
+    tower = [(x, 5.0 if z == 0.0 else z - 8.0 if z == p.z_base else z) for x, z in tower]
+    skirt = [(x, z - 8.0 if z == p.z_base else z) for x, z in skirt]
+    wall = None
+    for pts in (tower, bin_wall, skirt):
+        piece = _prism(pts, 0.0, p.plate_t)
+        wall = piece if wall is None else wall.union(piece)
+    wall = wall.cut(_prism(p.finger_notch(side), -1, p.plate_t + 1))
+    wall = _place(p, wall, out)
+
+    c = p.depth / 2
+    floor = _prism(p.bin_floor_outline(side), c, c + 200).cut(_place(p, _beyond(p, 0), out))
+    body = _trim(p, wall.union(floor))
+
+    holes = [h for h in p.bar_holes() if h[0] * sg > 0]
     bb = p.bin_bar
     holes.append((bb[0] if side == "L" else -bb[0], bb[1]))
-    for c in holes:
-        wall = wall.cut(_prism(_square(c, p.hole), w0 - 1, w1 + 1))
-    fx = sg * p.foot_x
-    half = p.foot_w / 2 + p.fit
-    wall = wall.cut(_box(fx - half, fx + half, p.z_base - 1, p.z_base + p.foot_h / 2, w0 - 1, w1 + 1))
-    return wall
+    for h in holes:
+        body = body.cut(_bar_cut(p, h))
+    fx, half = sg * p.foot_x, p.foot_w / 2 + p.fit
+    body = body.cut(_box(fx - half, fx + half, p.z_base - 1, p.z_base + p.foot_h / 2, -300, 400))
+    return body if front else body.mirror("XY", (0, 0, c))
 
 
-def build_back(p: Params, side: str):
-    """Back wall half with the bin floor and end stop standing on it."""
-    body = _wall_half(p, side, -p.plate_t, 0.0)
-    body = body.union(_prism(p.bin_floor_outline(side), 0.0, p.depth))
-    for t in p.tenons(side):
-        body = body.union(_prism(t, p.depth, p.depth + p.plate_t))
-    bb = p.bin_bar
-    c = (bb[0] if side == "L" else -bb[0], bb[1])
-    return body.cut(_prism(_square(c, p.hole), -p.plate_t - 1, p.depth + 1))
+def wall_faces(p: Params, z: float) -> tuple[float, float]:
+    """Distance from the centre plane to the inner and outer face of an end wall at height z."""
+    out = p.n_channels - p.n_channels // 2
+    if p.fan_R > 0:
+        th = out * p.fan_delta
+        inner = (p.fan_R - z) * math.tan(th)
+        return inner, inner + p.plate_t / math.cos(th)
+    return out * p.pitch, out * p.pitch + p.plate_t
 
 
-def build_front(p: Params, side: str):
-    body = _wall_half(p, side, p.depth, p.depth + p.plate_t)
-    for t in p.tenons(side, grow=p.fit):
-        body = body.cut(_prism(t, p.depth - 1, p.depth + p.plate_t + 1))
-    return body
+def bar_length(p: Params, at: Point) -> float:
+    """Shaft length of the tie bar at this position (the fan makes lower bars longer)."""
+    return 2 * wall_faces(p, at[1])[1] + p.tail
 
 
 def build_bar(p: Params, at: Point = (0.0, 0.0)):
     """Tie bar: head behind the back wall, slotted tail in front of the front wall."""
-    front = p.depth + p.plate_t
-    bar = _prism(_square(at, p.bar), -p.plate_t, front + p.tail)
+    c = p.depth / 2
+    reach = max(wall_faces(p, at[1] + s * p.bar / 2)[1] for s in (-1, 1)) + 0.1
+    back, front = c - reach, c + reach
+    bar = _prism(_square(at, p.bar), back, front + p.tail)
     head = _box(at[0] - p.bar / 2 - 2, at[0] + p.bar / 2 + 2, at[1] - p.bar / 2, at[1] + p.bar / 2,
-                -p.plate_t - p.head_t, -p.plate_t)
+                back - p.head_t, back)
     slot = _box(at[0] - p.slot_w / 2, at[0] + p.slot_w / 2, at[1] - p.bar, at[1] + p.bar,
-                front - 1.0, front - 1.0 + p.slot_len)
+                front - 1.5, front - 1.5 + p.slot_len)
     return bar.union(head).cut(slot)
 
 
 def build_wedge(p: Params, at: Point = (0.0, 0.0)):
     """Tapered key, drawn driven home through the bar at `at`."""
     import cadquery as cq
-    front = p.depth + p.plate_t
-    seat = p.slot_len - 1.0 - 0.4           # width where it crosses the bar
-    f = (seat - p.wedge_narrow) / (p.wedge_wide - p.wedge_narrow)
-    z_narrow = at[1] - f * p.wedge_len      # narrow end points down
-    prof = [(front, z_narrow), (front + p.wedge_narrow, z_narrow),
-            (front + p.wedge_wide, z_narrow + p.wedge_len), (front, z_narrow + p.wedge_len)]
+    f = 0.55                                 # how far along its length it seats
+    z_narrow = at[1] - f * p.wedge_len       # narrow end points down
+    z_wide = z_narrow + p.wedge_len
+    face = lambda z: p.depth / 2 + wall_faces(p, z)[1] + 0.1     # it lies against the (leaning) wall
+    prof = [(face(z_narrow), z_narrow), (face(z_narrow) + p.wedge_narrow, z_narrow),
+            (face(z_wide) + p.wedge_wide, z_wide), (face(z_wide), z_wide)]
     # profile is in (w, z); extrude along x
     return (cq.Workplane("YZ").workplane(offset=at[0] - p.wedge_t / 2)
             .polyline([(z, w) for w, z in prof]).close().extrude(p.wedge_t))
@@ -517,13 +683,24 @@ def build_wedge(p: Params, at: Point = (0.0, 0.0)):
 
 def build_foot(p: Params, side: str):
     sg = -1 if side == "L" else 1
-    fx = sg * p.foot_x
-    w0, w1 = -p.plate_t - p.foot_out, p.depth + p.plate_t + p.foot_out
-    foot = _box(fx - p.foot_w / 2, fx + p.foot_w / 2, p.z_base, p.z_base + p.foot_h, w0, w1)
-    for a, b in ((-p.plate_t, 0.0), (p.depth, p.depth + p.plate_t)):
-        foot = foot.cut(_box(fx - p.foot_w, fx + p.foot_w, p.z_base + p.foot_h / 2, p.z_base + p.foot_h + 1,
-                             a - p.fit, b + p.fit))
+    fx, c = sg * p.foot_x, p.depth / 2
+    top = p.z_base + p.foot_h
+    reach = wall_faces(p, p.z_base)[1] + p.foot_out
+    foot = _box(fx - p.foot_w / 2, fx + p.foot_w / 2, p.z_base, top, c - reach, c + reach)
+    a = wall_faces(p, top)[0] - p.fit            # the walls lean, so the slots are a little wider
+    b = wall_faces(p, p.z_base)[1] + p.fit
+    for lo, hi in ((c - b, c - a), (c + a, c + b)):
+        foot = foot.cut(_box(fx - p.foot_w, fx + p.foot_w, p.z_base + p.foot_h / 2, top + 1, lo, hi))
     return foot
+
+
+def build_jam_key(p: Params):
+    """A flat stick for pushing a stuck card down its channel from the top of the hopper."""
+    reach = p.hopper_h - p.z_hi + 15          # hopper rim to just past the top of the ramps
+    w, t = 14.0, 1.6
+    pts = [(-w / 2, 0), (w / 2, 0), (w / 2, reach), (22, reach), (22, reach + 18),
+           (-22, reach + 18), (-22, reach), (-w / 2, reach)]
+    return _prism(pts, 0.0, t)
 
 
 def bar_positions(p: Params) -> list[Point]:
@@ -531,12 +708,15 @@ def bar_positions(p: Params) -> list[Point]:
     return p.bar_holes() + [bb, (-bb[0], bb[1])]
 
 
+BAR_KINDS = ("bar_ear", "bar_ear", "bar_low", "bar_low", "bar_bin", "bar_bin")
+
+
 def build_parts(p: Params) -> dict:
     """Every part, in its assembled position."""
     parts = {f"slice_{i:02d}": build_slice(p, i) for i in range(p.n_channels)}
     for side in "LR":
-        parts[f"back_{side}"] = build_back(p, side)
-        parts[f"front_{side}"] = build_front(p, side)
+        parts[f"back_{side}"] = build_shell(p, side, front=False)
+        parts[f"front_{side}"] = build_shell(p, side, front=True)
         parts[f"foot_{side}"] = build_foot(p, side)
     parts["hopper"] = build_hopper(p)
     for k, at in enumerate(bar_positions(p)):
@@ -560,14 +740,24 @@ PRINT_ROTATION = {
     "wedge": ((0, 1, 0), 90),   # flat on its 2 mm face
     "foot": ((0, 1, 0), 90),    # on its side so the lap slots need no bridging
     "hopper": ((1, 0, 0), -90),  # upside down: throat on the bed, lugs on top
-    "slice_flipped": ((1, 0, 0), 180),  # back-half slices: turn over so the blade is on the bed
+    "jam": None,
+    "flipped": ((1, 0, 0), 180),  # back-half slices and front walls: turn over so the plate is on the bed
 }
 
 
 def as_printed(name: str, solid, p: Params = Params()):
+    """The part as it lies on the print bed, sitting at the origin."""
     kind = name.split("_")[0]
-    if kind == "slice" and p.blade_in_front(int(name.split("_")[1])):
-        kind = "slice_flipped"
+    out = p.n_channels - p.n_channels // 2
+    if kind == "slice":
+        i = int(name.split("_")[1])
+        solid = _unplace(p, solid, slice_steps(p, i))
+        if p.blade_in_front(i):
+            kind = "flipped"
+    elif kind in ("back", "front"):
+        solid = _unplace(p, solid, out if kind == "front" else -out)
+        if kind == "front":
+            kind = "flipped"
     rot = PRINT_ROTATION[kind]
     if rot:
         solid = solid.rotate((0, 0, 0), rot[0], rot[1])
@@ -579,8 +769,12 @@ def print_list(p: Params) -> dict[str, int]:
     """Distinct files to print and how many of each."""
     files = {f"slice_{i:02d}": 1 for i in range(p.n_channels)}
     files.update({"back_L": 1, "back_R": 1, "front_L": 1, "front_R": 1,
-                  "bar": 6, "wedge": 6, "foot": 2, "hopper": 1})
+                  "bar_ear": 2, "bar_low": 2, "bar_bin": 2, "wedge": 6, "foot": 2, "hopper": 1,
+                  "jam_key": 1})
     return files
+
+
+CANONICAL = {"bar_ear": "bar_0", "bar_low": "bar_2", "bar_bin": "bar_4", "wedge": "wedge_0", "foot": "foot_L"}
 
 
 def export(p: Params, out_dir: str) -> None:
@@ -588,11 +782,12 @@ def export(p: Params, out_dir: str) -> None:
     import cadquery as cq
     os.makedirs(out_dir, exist_ok=True)
     parts = build_parts(p)
-    canonical = {"bar": "bar_0", "wedge": "wedge_0", "foot": "foot_L"}
+    parts["jam_key"] = build_jam_key(p)
     for fname in print_list(p):
-        solid = as_printed(fname, parts[canonical.get(fname, fname)], p)
+        solid = as_printed(fname, parts[CANONICAL.get(fname, fname)], p)
         cq.exporters.export(solid, os.path.join(out_dir, fname + ".stl"), tolerance=0.02)
     asm = cq.Assembly()
+    del parts["jam_key"]
     for name, solid in parts.items():
         asm.add(solid.rotate((0, 0, 0), (1, 0, 0), 90), name=name)   # stand it upright: Z = up
     asm.save(os.path.join(out_dir, "assembly.step"))
@@ -601,6 +796,7 @@ def export(p: Params, out_dir: str) -> None:
 if __name__ == "__main__":
     import sys
     P = Params()
-    print(f"size {P.width:.0f} wide x {P.depth + 2 * P.plate_t:.0f} deep x {P.height:.0f} tall mm")
-    print(f"collar opening {2 * P.cx:.0f} x {P.depth:.1f} mm for a {P.deck_t:.0f} mm deck")
+    print(f"size {P.width:.0f} wide x {P.depth_at_base + 2 * P.plate_t:.0f} deep at the base x "
+          f"{P.height + P.hopper_h:.0f} tall mm (tower {P.height:.0f}, hopper {P.hopper_h:.0f})")
+    print(f"collar opening {2 * P.cx:.0f} x {P.depth:.0f} mm, throat {P.throat:.0f} mm, for a {P.deck_t:.0f} mm deck")
     export(P, sys.argv[1] if len(sys.argv) > 1 else "out")

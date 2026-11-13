@@ -3,16 +3,18 @@
 Read top to bottom, these follow a deck through the machine:
 
     1. the deck fits the hopper and collar
-    2. the comb splits it
+    2. the comb splits it - and cannot jam it
     3. each packet falls, tips over and slides out
     4. the bins catch the cards and let you pick them up
     5. the parts clamp together with printed hardware only
     6. every part can actually be printed, and nothing collides
     7. repeating the drop really does shuffle the deck (statistical model)
-    8. a rigid-body physics engine agrees, and shows why the design is the
-       way it is (the first version failed these)
+    8. a rigid-body physics engine agrees
+    9. every fault the physics engine found on the way here, reproduced on
+       purpose, so the reason for each design decision stays on record
 
-Run with:  pytest test_shuffler.py          (about a minute; section 8 is the slow part)
+Run with:  pytest test_shuffler.py                   (about 8 minutes on 4 cores)
+           pytest test_shuffler.py -k "not Physics and not Limits"   (15 seconds: geometry and statistics only)
 """
 
 import itertools
@@ -25,12 +27,14 @@ import pytest
 from shuffle_sim import (CombModel, cut_into_packets, mean_neighbours_kept,
                          neighbours_kept, one_pass, passes_needed,
                          position_bias, restack, shuffle)
-from shuffler_design import (PRINT_ROTATION, Params, _box, as_printed,
-                             bar_positions, build_parts, print_list,
-                             resting_pile)
+from shuffler_design import (BAR_KINDS, PRINT_ROTATION, Params, _box, _unplace,
+                             as_printed, bar_length, bar_positions,
+                             build_jam_key, build_parts, print_list,
+                             resting_pile, slice_steps, wall_faces)
 
 P = Params()
 MID = P.n_channels // 2
+CARD_SOLID = 0.6          # thickness of one sleeved card squeezed flat
 
 
 # ------------------------------------------------------- 1. hopper & collar
@@ -52,15 +56,38 @@ class TestDeckFitsTheHopperAndCollar:
         deck_top = -P.tip_guard + P.sleeve_h
         assert P.hopper_h - P.throat_h < deck_top <= P.hopper_h
 
-    def test_below_the_throat_the_hopper_is_as_deep_as_the_comb(self):
-        w_inner_at_rim = max(w for w, z in P.hopper_end_wz(front=False) if z == 0.0)
-        assert w_inner_at_rim == 0.0
+    def test_hopper_leans_back_a_few_degrees_so_the_deck_does(self):
+        # A deck that meets the blades slightly tilted went through clean in
+        # 64 of 64 simulated drops; a perfectly upright one in 51 of 64.
+        assert 3 <= P.hopper_lean_deg <= 6
+        top_of_ring = P.hopper_shear(P.hopper_h)
+        assert top_of_ring == pytest.approx(-P.hopper_h * math.tan(math.radians(P.hopper_lean_deg)))
+        assert P.hopper_shear(0.0) == 0.0, "the hopper still sits squarely on the rim"
+
+    def test_hopper_walls_stop_the_deck_leaning_much_more_or_less_than_that(self):
+        play = (P.throat + P.tube_clear - P.deck_t) / 2 + (P.throat - P.deck_t) / 2
+        extra_lean = math.degrees(math.atan(play / (P.hopper_h - P.throat_h)))
+        assert extra_lean < 9
+        assert P.tube_inset > 0
+
+    def test_finger_slots_let_you_lower_the_deck_to_the_blades_by_its_edges(self):
+        # Dropping it from the top of the hopper works less well, and holding
+        # it by its faces squeezes it tight, which the comb cannot take.
+        deck_top_at_release = -P.tip_guard + 2 + P.sleeve_h
+        slot_bottom = P.hopper_h - P.finger_slot
+        assert deck_top_at_release - slot_bottom >= 40, "room for fingertips on the deck's edges"
+        assert slot_bottom >= 30, "enough wall left below the slot to guide the cards"
+        assert P.depth - 2 * P.post_w >= P.deck_t
+
+    def test_collar_is_no_deeper_than_the_deck_needs(self):
+        used = P.deck_t + (P.throat - P.deck_t) + P.pitch       # deck, where it may land, one spare lane
+        assert P.depth <= used + 2 * P.pitch
 
     def test_comb_is_deeper_than_the_deck_so_cards_have_room_to_spread(self):
         assert P.depth > P.deck_t + P.n_channels * P.blade_t
 
     def test_double_sleeved_deck_still_fits(self):
-        thick = Params(card_pitch=0.80)
+        thick = Params(card_pitch=0.80, n_channels=14)
         assert thick.deck_t < thick.capacity
         assert thick.throat < thick.depth
 
@@ -68,19 +95,10 @@ class TestDeckFitsTheHopperAndCollar:
 # ------------------------------------------------------------------ 2. comb
 class TestCombSplitsTheDeck:
     def test_channels_can_swallow_the_whole_deck_with_margin(self):
-        assert P.capacity >= 1.15 * P.deck_t
+        assert P.capacity >= 1.1 * P.deck_t
 
     def test_a_packet_is_about_seven_cards(self):
         assert 6 <= P.cards_per_channel <= 8
-
-    def test_blades_are_thin_compared_with_their_spacing(self):
-        # Learned from the physics test: 1.2 mm blades at 4.7 mm pitch (26%)
-        # jam two thirds of the deck; 0.8 at 5.0 (16%) passes.
-        assert P.blade_t / P.pitch <= 0.17
-
-    def test_blade_is_a_whole_number_of_layers_and_its_tip_is_one_layer(self):
-        assert (P.blade_t / 0.2) == pytest.approx(round(P.blade_t / 0.2))
-        assert P.tip_land == pytest.approx(0.2)
 
     def test_half_the_channels_feed_each_bin(self):
         sides = [P.side(i) for i in range(P.n_channels)]
@@ -90,15 +108,13 @@ class TestCombSplitsTheDeck:
         assert all(P.side(i) != P.side(i + 1) for i in range(P.n_channels - 1))
 
     def test_every_blade_is_on_the_centre_side_of_its_own_channel(self):
-        # Back-half slices are mirrored, so every bevel faces away from the
-        # centre and nudges the rest of the deck outwards.
+        # Back-half slices are mirrored, so the two halves of the comb are
+        # mirror images and the two middle blades sit back to back.
         centre = P.depth / 2
         for i in range(P.n_channels):
             blade_mid = sum(P.blade_w(i)) / 2
             channel_mid = sum(P.channel_range(i)) / 2
             assert abs(blade_mid - centre) < abs(channel_mid - centre)
-
-    def test_the_two_middle_blades_sit_back_to_back(self):
         assert P.blade_w(MID - 1)[1] == pytest.approx(P.blade_w(MID)[0])
 
     def test_exactly_one_blade_leads(self):
@@ -113,22 +129,74 @@ class TestCombSplitsTheDeck:
         for i in range(MID, 0, -1):
             assert P.tip_z(i - 1) == pytest.approx(P.tip_z(i) - P.chevron_step)
 
-    def test_a_blade_is_fully_in_before_the_next_one_starts(self):
-        assert P.chevron_step >= P.bevel_h
-
     def test_blade_tips_are_below_the_rim(self):
         assert all(P.tip_z(i) <= -P.tip_guard for i in range(P.n_channels))
 
     def test_blade_tops_slope_away_from_a_central_peak(self):
-        outline = P.blade_outline(MID)
-        peak = max(z for x, z in outline if abs(x) < P.cx)
-        eave = min(z for x, z in outline if abs(x) == P.cx and z > -P.collar_h)
-        assert peak - eave == pytest.approx(P.roof_drop)
+        left, peak, right = P.blade_top(MID)
+        assert peak[0] == 0 and peak[1] == P.tip_z(MID)
+        assert left[1] == right[1] == pytest.approx(peak[1] - P.top_drop)
         assert P.roof_deg >= 10
 
     def test_every_blade_edge_ends_inside_the_collar(self):
-        deepest_eave = min(P.tip_z(i) for i in range(P.n_channels)) - P.roof_drop
-        assert -P.collar_h < deepest_eave - P.bevel_h
+        lowest_edge = min(z for i in range(P.n_channels) for _, z in P.blade_top(i))
+        assert -P.collar_h < lowest_edge
+
+
+class TestCombCannotJam:
+    """The three rules the physics test forced on the comb (see section 9)."""
+
+    def test_blade_tip_is_one_layer_and_the_blade_is_whole_layers(self):
+        assert P.tip_land == pytest.approx(0.2)
+        assert (P.blade_t / 0.2) == pytest.approx(round(P.blade_t / 0.2))
+
+    def test_rule_1_blades_fan_out_from_a_hinge_far_above_the_rim(self):
+        assert P.fan_R > 3 * P.sleeve_h
+        assert P.spread(0.0) == 1.0
+        assert P.spread(P.z_base) > 1.4            # machine is 40%+ deeper at the table than at the rim
+        assert math.degrees(P.fan_delta) < 1.0     # under a degree between neighbouring blades
+
+    def test_the_fan_spreads_card_bottoms_by_about_the_thickness_of_all_the_blades(self):
+        # While a card's bottom is at the tips its top is one card height nearer
+        # the hinge.  The fan must let the bottoms of the deck spread by roughly
+        # what the blades add, while the tops stay together.  Too little and the
+        # deck wedges; too much and the tops are squeezed instead.
+        bottoms_spread = P.depth * P.sleeve_h / P.fan_R
+        blades_add = P.n_channels * P.blade_t
+        assert 0.9 * blades_add <= bottoms_spread <= 1.5 * blades_add
+
+    def test_the_fan_angle_is_inside_the_window_the_physics_test_passed(self):
+        assert 350 <= P.fan_R <= 550
+
+    def test_rule_2_no_channel_ever_gets_narrower_on_the_way_down(self):
+        for i in (MID, MID + 3, P.n_channels - 1):
+            z = P.tip_z(i)
+            widths = []
+            while z > P.z_base:
+                widths.append(P.channel_width(i, z))
+                z -= 1.0
+            assert all(b >= a - 1e-9 for a, b in zip(widths, widths[1:])), f"blade {i}"
+
+    def test_the_narrowest_point_holds_a_packet_plus_a_card_split_by_the_tip(self):
+        narrowest = min(P.channel_width(i, P.tip_z(i)) for i in range(P.n_channels))
+        packet = (P.cards_per_channel + 0.5) * CARD_SOLID
+        assert narrowest >= packet + 0.2
+
+    def test_rule_3_a_blade_is_well_into_the_deck_before_the_next_one_starts(self):
+        assert P.chevron_step >= 3.0
+
+    def test_blade_faces_are_flush_right_across_including_the_ears(self):
+        # The taper line runs past the ears.  When it stopped at the collar
+        # opening the ears stood proud of the blade and caught cards.
+        xs = [x for x, _ in P.above_taper_line(MID, 30.0)]
+        assert min(xs) < -P.px and max(xs) > P.px
+
+    def test_a_point_further_down_a_channel_is_further_out(self):
+        c = P.depth / 2
+        for z in (-10.0, -100.0, -200.0):
+            assert P.lane_of(c + 2.5 * P.spread(z), z) == MID
+            assert P.lane_of(c + 7.5 * P.spread(z), z) == MID + 1
+            assert P.lane_of(c - 2.5 * P.spread(z), z) == MID - 1
 
 
 # ------------------------------------------------------------- 3. card path
@@ -172,23 +240,24 @@ class TestBinsCatchAndReleaseTheCards:
     def test_bin_is_longer_than_a_card_is_wide(self):
         assert P.bin_len > P.sleeve_w
 
-    def test_end_stop_is_taller_than_a_cards_centre_of_gravity(self):
-        # A card arrives at well over 1 m/s.  A stop below its centre of
-        # gravity trips it and it somersaults out (see section 8).
-        assert P.stop_h > P.sleeve_h / 2 + 10
+    def test_end_fence_is_taller_than_a_card(self):
+        # A card arrives at well over 1 m/s.  A 26 mm stop tripped it and it
+        # somersaulted out; a 60 mm one held until the deck was dropped from
+        # the top of the hopper (see section 9).
+        assert P.fence_h > P.sleeve_h
 
     def test_walls_are_above_a_cards_centre_of_gravity(self):
         assert P.wall_h > P.sleeve_h / 2 + 5
 
     def test_cards_stick_out_above_the_walls_to_be_pinched(self):
-        assert P.sleeve_h - max(P.wall_h, P.stop_h) >= 25
+        assert P.sleeve_h - P.wall_h >= 25
 
     def test_finger_notch_is_wide_enough_for_a_thumb_but_not_a_card(self):
         assert 22 <= P.notch_w < P.sleeve_w
 
     def test_end_stop_is_square_to_the_floor(self):
         a = P.bin_pt(P.bin_len, 0)
-        b = P.bin_pt(P.bin_len, P.stop_h)
+        b = P.bin_pt(P.bin_len, P.fence_h)
         c = P.bin_pt(0, 0)
         dot = (b[0] - a[0]) * (c[0] - a[0]) + (b[1] - a[1]) * (c[1] - a[1])
         assert dot == pytest.approx(0, abs=1e-9)
@@ -202,15 +271,21 @@ class TestBinsCatchAndReleaseTheCards:
 class TestPrintedHardwareClampsTheStack:
     def test_six_bars_three_in_each_half(self):
         xs = [x for x, _ in bar_positions(P)]
-        assert len(xs) == 6
+        assert len(xs) == len(BAR_KINDS) == 6
         assert sum(x < 0 for x in xs) == sum(x > 0 for x in xs) == 3
 
-    def test_bar_reaches_through_both_walls_with_room_for_the_wedge(self):
-        assert P.bar_len - (P.depth + 2 * P.plate_t) >= P.slot_len
+    def test_each_bar_reaches_through_both_walls_with_room_for_the_wedge(self):
+        for at in bar_positions(P):
+            assert bar_length(P, at) >= 2 * wall_faces(P, at[1])[1] + P.slot_len
 
-    def test_wedge_slot_starts_inside_the_wall_so_the_wedge_pulls_the_bar_tight(self):
-        # slot begins 1 mm behind the wall's outer face (see build_bar)
-        assert P.wedge_narrow < P.slot_len - 1.0 < P.wedge_wide
+    def test_lower_bars_are_longer_because_the_machine_fans_out(self):
+        ear, _, low, _, bin_, _ = (bar_length(P, at) for at in bar_positions(P))
+        assert ear < low < bin_
+        assert bin_ - ear > 20
+
+    def test_wedge_seats_part_way_along_its_taper(self):
+        usable_slot = P.slot_len - 1.5        # the slot starts 1.5 mm inside the wall (see build_bar)
+        assert P.wedge_narrow < usable_slot < P.wedge_wide
 
     def test_wedge_taper_is_self_locking(self):
         assert P.wedge_deg < 10
@@ -230,8 +305,13 @@ class TestPrintedHardwareClampsTheStack:
         assert P.bar_z_low + P.hole / 2 < underside_of_left_rib
 
     def test_bin_bar_passes_through_the_end_stop(self):
-        assert 0 < 11.0 < P.stop_h
         assert P.stop_t > P.hole * 1.5
+
+    def test_jam_key_reaches_from_the_hopper_rim_to_the_ramps_and_fits_any_channel(self):
+        bb = build_jam_key(P).val().BoundingBox()
+        assert bb.ylen > P.hopper_h - P.z_hi
+        narrowest = min(P.channel_width(i, P.tip_z(i) - 5) for i in range(P.n_channels))
+        assert bb.zlen < narrowest / 2
 
 
 # ---------------------------------------------------------- 6. printability
@@ -259,9 +339,10 @@ class TestEveryPartIsPrintableAndNothingCollides:
     def test_print_list_names_every_distinct_part(self):
         files = print_list(P)
         assert sum(n for f, n in files.items() if f.startswith("slice")) == P.n_channels
-        assert files["bar"] == files["wedge"] == 6
+        assert files["bar_ear"] == files["bar_low"] == files["bar_bin"] == 2
+        assert files["wedge"] == 6
         assert files["foot"] == 2
-        assert files["hopper"] == 1
+        assert files["hopper"] == files["jam_key"] == 1
 
     def test_every_part_is_one_valid_solid(self, parts):
         for name, s in parts.items():
@@ -274,18 +355,38 @@ class TestEveryPartIsPrintableAndNothingCollides:
             bb = as_printed(name, s, P).val().BoundingBox()
             assert bb.xlen <= P.bed[0] and bb.ylen <= P.bed[1] and bb.zlen <= P.bed[2], name
 
-    def test_walls_print_flat_as_modelled(self):
-        assert PRINT_ROTATION["back"] is None and PRINT_ROTATION["front"] is None
-
     def test_every_slice_prints_with_its_blade_on_the_bed(self, parts):
         # ...including the mirrored back-half slices, which are turned over.
         for i in (0, MID - 1, MID, P.n_channels - 1):
             printed = as_printed(f"slice_{i:02d}", parts[f"slice_{i:02d}"], P)
             bb = printed.val().BoundingBox()
-            assert bb.zlen == pytest.approx(P.pitch)
             first_layer = _box(bb.xmin, bb.xmax, bb.ymin, bb.ymax, 0.0, 0.2)
-            last_layer = _box(bb.xmin, bb.xmax, bb.ymin, bb.ymax, P.pitch - 0.2, P.pitch)
+            last_layer = _box(bb.xmin, bb.xmax, bb.ymin, bb.ymax, bb.zlen - 0.2, bb.zlen)
             assert _overlap_volume(printed, first_layer) > 3 * _overlap_volume(printed, last_layer)
+
+    def test_slice_spacers_are_wedges_thicker_at_the_bottom(self, parts):
+        # This is what builds the fan: stack the slices and they splay out.
+        printed = as_printed(f"slice_{MID:02d}", parts[f"slice_{MID:02d}"], P)
+        thickest = printed.val().BoundingBox().zlen
+        assert thickest == pytest.approx(P.pitch * P.spread(P.z_lo - P.rib_d), abs=0.2)
+        assert thickest > 1.35 * P.pitch
+
+    def test_blade_is_one_layer_thick_at_its_tip_and_full_thickness_low_down(self, parts):
+        local = _unplace(P, parts[f"slice_{MID:02d}"], slice_steps(P, MID))
+        tip = P.tip_z(MID)
+        near_tip = _box(-10, 10, tip - 4, tip - 2, -1, 5)
+        low_down = _box(-10, 10, tip - P.bevel_h - 6, tip - P.bevel_h - 4, -1, 5)
+        assert local.intersect(near_tip).val().BoundingBox().zlen == pytest.approx(P.tip_land, abs=0.01)
+        assert local.intersect(low_down).val().BoundingBox().zlen == pytest.approx(P.blade_t, abs=0.01)
+
+    def test_collar_wall_is_cut_short_on_the_side_the_cards_leave_by(self, parts):
+        for i in (MID, MID + 1):
+            local = _unplace(P, parts[f"slice_{i:02d}"], slice_steps(P, i))
+            sg = -1 if P.side(i) == "L" else 1
+            lo, hi = sorted((sg * P.cx, sg * P.px))
+            below_short_wall = _box(lo, hi, -P.collar_h + 1, -P.boss_short - 0.5, P.blade_t + 0.1, 3.0)
+            assert _overlap_volume(local, below_short_wall) < 1e-6
+            assert _overlap_volume(local, below_short_wall.mirror("YZ")) > 50
 
     def test_hopper_prints_upside_down_with_the_throat_ring_on_the_bed(self, parts):
         printed = as_printed("hopper", parts["hopper"], P)
@@ -295,19 +396,25 @@ class TestEveryPartIsPrintableAndNothingCollides:
         ring, wall = _overlap_volume(printed, slab(5, 6)), _overlap_volume(printed, slab(50, 51))
         assert ring > wall, "the thick ring must be at the bottom of the print"
 
-    def test_slices_stack_to_fill_the_gap_between_the_walls(self, parts):
-        lo = min(parts[f"slice_{i:02d}"].val().BoundingBox().zmin for i in range(P.n_channels))
-        hi = max(parts[f"slice_{i:02d}"].val().BoundingBox().zmax for i in range(P.n_channels))
-        assert (lo, hi) == (pytest.approx(0.0), pytest.approx(P.depth))
+    def test_the_four_shells_are_mirror_images(self, parts):
+        volumes = [_volume(parts[n]) for n in ("back_L", "back_R", "front_L", "front_R")]
+        assert max(volumes) == pytest.approx(min(volumes), rel=1e-6)
 
-    def test_collar_wall_is_cut_short_on_the_side_the_cards_leave_by(self, parts):
-        for i in (MID, MID + 1):
-            sg = -1 if P.side(i) == "L" else 1
-            lo, hi = sorted((sg * P.cx, sg * P.px))
-            c0, c1 = P.channel_range(i)
-            below_short_wall = _box(lo, hi, -P.collar_h, -P.boss_short - 0.1, c0 + 0.1, c1 - 0.1)
-            assert _overlap_volume(parts[f"slice_{i:02d}"], below_short_wall) < 1e-6
-            assert _overlap_volume(parts[f"slice_{i:02d}"], below_short_wall.mirror("YZ")) > 100
+    def test_a_shell_prints_wall_down_with_half_a_bin_floor_standing_on_it(self, parts):
+        for name in ("back_L", "front_R"):
+            bb = as_printed(name, parts[name], P).val().BoundingBox()
+            assert bb.zlen == pytest.approx(P.plate_t + P.depth_at_base / 2, abs=4.0)
+
+    def test_bin_floor_halves_meet_on_the_centre_plane(self, parts):
+        c = P.depth / 2
+        assert parts["front_L"].val().BoundingBox().zmin == pytest.approx(c, abs=1e-6)
+        assert parts["back_L"].val().BoundingBox().zmax == pytest.approx(c, abs=1e-6)
+
+    def test_everything_is_flush_with_the_rim_and_the_table(self, parts):
+        for name in ("slice_00", f"slice_{MID:02d}", "back_L", "front_R"):
+            bb = parts[name].val().BoundingBox()
+            assert bb.ymax <= 1e-6, name
+            assert bb.ymin >= P.z_base - 1e-6, name
 
     def test_no_two_parts_occupy_the_same_space(self, parts):
         clashes = []
@@ -326,10 +433,10 @@ class TestEveryPartIsPrintableAndNothingCollides:
                     assert _overlap_volume(pile, s) < 0.5, name
 
     def test_overall_size(self):
-        assert P.width < 300
+        assert P.width < 320
         assert P.height < 250, "tower walls must fit a 250 mm bed"
         assert P.height + P.hopper_h < 340
-        assert P.depth + 2 * P.plate_t < 80
+        assert P.depth_at_base + 2 * P.plate_t < 125
 
 
 # ------------------------------------------------ 7. shuffle (statistical model)
@@ -364,7 +471,7 @@ class TestRepeatedDropsShuffleTheDeck:
         assert left == sorted(left) and right == sorted(right)
 
     def test_a_straggler_moves_only_within_its_own_packet(self):
-        left, right = one_pass(list(range(60)), MODEL, random.Random(5))
+        left, right = one_pass(list(range(60)), replace(MODEL, straggle=1.0), random.Random(5))
         assert left != sorted(left) or right != sorted(right)
         for pile in (left, right):
             assert all(abs(a - b) <= 2 * 8 for a, b in zip(sorted(pile), pile))
@@ -381,26 +488,29 @@ class TestRepeatedDropsShuffleTheDeck:
         assert neighbours_kept(list(range(60))) == 1.0
         assert neighbours_kept(list(range(59, -1, -1))) == 0.0
 
-    def test_one_drop_separates_about_a_quarter_of_neighbours(self):
-        assert 0.65 < mean_neighbours_kept(60, 1, MODEL, 300) < 0.80
+    def test_one_drop_separates_about_a_sixth_of_neighbours(self):
+        assert 0.78 < mean_neighbours_kept(60, 1, MODEL, 300) < 0.88
 
     def test_more_drops_always_mix_more(self):
         kept = [mean_neighbours_kept(60, k, MODEL, 300) for k in (1, 3, 6, 10, 15)]
         assert kept == sorted(kept, reverse=True)
 
-    def test_ten_drops_leave_under_a_tenth_of_neighbours_together(self):
-        assert mean_neighbours_kept(60, 10, MODEL, 400) < 0.10
+    def test_fifteen_drops_leave_under_a_tenth_of_neighbours_together(self):
+        assert mean_neighbours_kept(60, 15, MODEL, 400) < 0.10
 
-    def test_about_thirteen_drops_is_indistinguishable_from_random_by_neighbours(self):
-        assert 10 <= passes_needed(60, MODEL) <= 16
+    def test_about_twenty_drops_is_indistinguishable_from_random_by_neighbours(self):
+        assert 17 <= passes_needed(60, MODEL) <= 25
 
-    def test_stragglers_halve_the_number_of_drops_needed(self):
-        assert passes_needed(60, IDEAL) > 1.5 * passes_needed(60, MODEL)
+    def test_stragglers_were_doing_some_of_the_shuffling(self):
+        # The jam-prone comb delayed a card at about half its cuts and needed
+        # 13 drops.  Removing the jams removed that, and the price is more drops.
+        assert passes_needed(60, replace(MODEL, straggle=0.45)) < 0.75 * passes_needed(60, MODEL)
+        assert passes_needed(60, IDEAL) > passes_needed(60, MODEL)
 
-    def test_after_seven_drops_any_card_can_be_anywhere(self):
+    def test_after_eight_drops_any_card_can_be_anywhere(self):
         trials = 3000
         noise_floor = math.sqrt(60 / (2 * math.pi * trials))
-        assert position_bias(60, 7, MODEL, trials) < 1.15 * noise_floor
+        assert position_bias(60, 8, MODEL, trials) < 1.15 * noise_floor
 
     def test_strict_alternation_beats_pairing_channels_up(self):
         paired = replace(MODEL, pattern="LLRR")
@@ -411,19 +521,26 @@ class TestRepeatedDropsShuffleTheDeck:
 
 
 # --------------------------------------------------- 8. rigid-body physics
-# MuJoCo drops 60 rigid 0.6 mm cards into the real geometry.  Thresholds are
-# loose because contact dynamics are chaotic: over 16 seeds the design
-# delivered 98% of cards, with 11 drops perfectly clean.
+# MuJoCo drops 60 rigid cards into the real geometry.  Card edges are modelled
+# two ways because it matters a great deal: "round" (a sleeve's folded edge)
+# and "flat" (a square-cut plate).  Thresholds are loose because contact
+# dynamics are chaotic; the README has the 32-drop statistics.
 physics_sim = pytest.importorskip("physics_sim")
 pytest.importorskip("mujoco")
+from physics_sim import COMB, ESCAPED, FLOP, PERCHED, Conditions  # noqa: E402
 
+ROUND, FLAT = Conditions(card_bottom="round"), Conditions(card_bottom="flat")
 SEEDS = (1, 2, 3)
 
 
-def _drops(p, seeds=SEEDS):
-    rig = physics_sim.Rig(p)
+def _drops(p, conditions=ROUND, seeds=SEEDS, n_cards=None):
+    rig = physics_sim.Rig(p, n_cards=n_cards, conditions=conditions)
     deck = list(range(rig.n))
     return [rig.drop(deck, random.Random(s)) for s in seeds]
+
+
+def _jammed(drops, *kinds):
+    return sum(r.jam_types().get(k, 0) for r in drops for k in kinds)
 
 
 @pytest.fixture(scope="module")
@@ -431,13 +548,28 @@ def drops():
     return _drops(P)
 
 
+@pytest.fixture(scope="module")
+def flat_drops():
+    return _drops(P, FLAT)
+
+
 class TestPhysicsEngineAgrees:
     def test_nearly_every_card_reaches_a_bin(self, drops):
         for r in drops:
-            assert len(r.left) + len(r.right) >= 57
+            assert r.delivered >= 58
 
-    def test_no_card_leaves_the_machine(self, drops):
-        assert all(not r.escaped for r in drops)
+    def test_nothing_jams_in_the_comb_with_either_kind_of_card_edge(self, drops, flat_drops):
+        assert _jammed(drops + flat_drops, COMB) == 0
+
+    def test_no_card_leaves_the_machine(self, drops, flat_drops):
+        assert _jammed(drops + flat_drops, ESCAPED) == 0
+
+    def test_square_edged_cards_can_perch_on_a_blade_tip_but_only_one_or_two(self, flat_drops):
+        # The one fault that is still there.  It needs a square, rigid card
+        # edge; the card stays in the hopper in plain view.
+        for r in flat_drops:
+            assert r.delivered >= 57
+            assert r.jam_types().get(PERCHED, 0) <= 2
 
     def test_piles_are_roughly_equal(self, drops):
         for r in drops:
@@ -451,31 +583,104 @@ class TestPhysicsEngineAgrees:
     def test_packets_are_seven_cards_as_the_statistical_model_assumes(self, drops):
         for r in drops:
             sizes = [n for _, n in physics_sim.packets(list(range(60)), r)]
-            assert max(sizes) <= 8
-            assert sizes.count(7) >= len(sizes) // 2
+            assert max(sizes) <= 9
+            assert sum(6 <= n <= 8 for n in sizes) >= len(sizes) // 2
 
     def test_piles_are_in_order_apart_from_a_few_stragglers(self, drops):
         for r in drops:
             for pile in (r.left, r.right):
                 out_of_order = sum(1 for a, b in zip(pile, pile[1:]) if b < a)
-                assert out_of_order <= 6
+                assert out_of_order <= 4
 
-    def test_one_drop_keeps_about_two_thirds_of_neighbours(self, drops):
+    def test_one_drop_keeps_about_five_sixths_of_neighbours(self, drops):
         kept = [neighbours_kept(r.left + r.right + r.stuck) for r in drops]
-        assert 0.5 < sum(kept) / len(kept) < 0.85
+        assert 0.75 < sum(kept) / len(kept) < 0.92
 
     def test_cards_settle_within_three_seconds(self, drops):
         assert all(r.settle_time < 3.0 for r in drops)
 
+    def test_a_smaller_deck_works_too(self):
+        for r in _drops(P, seeds=(1, 2), n_cards=40):
+            assert r.delivered >= 38
+
+
+# ----------------------------------- 9. faults found, reproduced on purpose
+# Jams are occasional, so these run 8 or 16 drops each (in parallel) and
+# compare rates.  Every threshold is well clear of what was measured.
+OLD_BODY = dict(n_channels=14, hopper_lean_deg=0.0, fence_h=60.0, tube_clear=22.0, finger_slot=0.0)
+V1 = replace(P, fan_R=0.0, blade_t=1.2, channel_w=3.5, tip_land=0.4, bevel_h=3.0, **OLD_BODY)
+V2 = replace(P, fan_R=0.0, blade_t=0.8, channel_w=4.2, tip_land=0.2, bevel_h=2.0, **OLD_BODY)
+FROM_THE_TOP = replace(ROUND, release_height=90.0)
+
+
+def _score(p, conditions=ROUND, drops=16):
+    return physics_sim.evaluate(p, conditions, range(1, drops + 1))
+
+
+@pytest.fixture(scope="module")
+def today():
+    return _score(P)
+
 
 class TestPhysicsExplainsTheDesign:
-    """Each of these is a fault the first version had, reproduced on purpose."""
+    """Each test is a version of the machine that failed, and how."""
 
-    def test_thick_blades_jam_the_deck(self):
-        first_version = replace(P, blade_t=1.2, channel_w=3.5)
-        for r in _drops(first_version, seeds=(1, 2)):
-            assert len(r.stuck) > 20
+    def test_today_sixteen_drops_with_no_comb_jam_and_nearly_all_clean(self, today):
+        assert today.jams.get(COMB, 0) == 0
+        assert today.clean >= 14
+        assert today.delivered_frac > 0.995
 
-    def test_a_low_end_stop_lets_cards_somersault_out_of_the_bins(self):
-        low_stop = replace(P, stop_h=26.0)
-        assert sum(len(r.escaped) for r in _drops(low_stop, seeds=(1, 2))) > 10
+    def test_v1_thick_parallel_blades_jam_most_of_the_deck(self):
+        # Blades were 26% of their spacing.  The deck cannot spread that much
+        # in the instant it is cut, so it fans out and locks.
+        assert _score(V1, FLAT, drops=8).delivered_frac < 0.70
+
+    def test_v1_a_26mm_end_stop_lets_cards_somersault_out_of_the_bins(self):
+        assert _score(replace(P, fence_h=26.0), drops=8).jams.get(ESCAPED, 0) > 50
+
+    def test_v2_thin_parallel_blades_pass_square_edges_but_jam_rounded_ones(self):
+        # A square edge that does not fit is held out on the blade tip.  A
+        # rounded edge wedges in.  So v2 only looked good with unrealistic cards.
+        assert _score(V2, FLAT).delivered_frac > 0.85
+        assert _score(V2, ROUND).delivered_frac < 0.75
+
+    def test_without_the_fan_todays_blades_jam(self):
+        assert _score(replace(P, fan_R=0.0), drops=8).delivered_frac < 0.75
+
+    def test_too_strong_a_fan_squeezes_the_tops_of_the_packets_together(self):
+        strong = _score(replace(P, fan_R=250.0))
+        assert strong.jam_drops.get(COMB, 0) >= 2
+
+    def test_a_blade_that_thickens_too_quickly_narrows_its_channel_and_jams(self):
+        short_taper = replace(P, bevel_h=20.0)
+        z = P.tip_z(MID)
+        assert short_taper.channel_width(MID, z - 20) < short_taper.channel_width(MID, z)
+        assert _score(short_taper).delivered_frac < 0.60
+
+    def test_an_upright_hopper_leaves_more_stray_cards_than_a_leaning_one(self, today):
+        upright = _score(replace(P, hopper_lean_deg=0.0))
+        assert upright.clean < today.clean
+
+    def test_v3_a_60mm_stop_holds_until_the_deck_is_dropped_from_the_top_of_the_hopper(self, today):
+        assert today.jams.get(ESCAPED, 0) == 0
+        over_the_60mm_stop = _score(replace(P, fence_h=60.0), FROM_THE_TOP, drops=8).jams.get(ESCAPED, 0)
+        over_the_full_fence = _score(P, FROM_THE_TOP, drops=8).jams.get(ESCAPED, 0)
+        assert over_the_60mm_stop >= over_the_full_fence + 5
+
+
+class TestKnownLimits:
+    """Faults that are still there.  These tests document them; they do not excuse them."""
+
+    def test_dropping_the_deck_from_the_top_of_the_hopper_jams_the_comb(self):
+        # A deck arriving at 1.3 m/s cannot spread in time.  Hence the finger
+        # slots: lower the deck to the blades, then let go.
+        assert _score(P, FROM_THE_TOP, drops=8).delivered_frac < 0.85
+        assert _score(P, replace(ROUND, release_height=30.0), drops=8).delivered_frac > 0.97
+
+    def test_a_deck_squeezed_until_only_a_tenth_of_it_is_air_jams_the_comb(self):
+        # The narrowest point of a channel holds a packet plus half a card only
+        # while the cards are no thicker than about 0.62 mm at 0.7 mm spacing.
+        tight = replace(ROUND, card_t=0.63)
+        narrowest = min(P.channel_width(i, P.tip_z(i)) for i in range(P.n_channels))
+        assert narrowest - (P.cards_per_channel + 0.5) * tight.card_t < 0.1     # no margin left
+        assert _score(P, tight, drops=8).delivered_frac < 0.90
