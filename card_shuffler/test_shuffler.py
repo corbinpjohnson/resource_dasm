@@ -13,7 +13,7 @@ Read top to bottom, these follow a deck through the machine:
     9. every fault the physics engine found on the way here, reproduced on
        purpose, so the reason for each design decision stays on record
 
-Run with:  pytest test_shuffler.py                   (about 30 minutes on 4 cores)
+Run with:  pytest test_shuffler.py                   (about an hour on 4 cores)
            pytest test_shuffler.py -k "not Physics and not Limits"   (15 seconds: geometry and statistics only)
 """
 
@@ -152,9 +152,16 @@ class TestCombSplitsTheDeck:
 class TestCombCannotJam:
     """The three rules the physics test forced on the comb (see section 9)."""
 
-    def test_blade_tip_is_one_layer_and_the_blade_is_whole_layers(self):
+    def test_blade_tip_and_blade_are_whole_numbers_of_layers(self):
         assert P.tip_land == pytest.approx(0.2)
-        assert (P.blade_t / 0.2) == pytest.approx(round(P.blade_t / 0.2))
+        for thickness in (P.tip_land, P.blade_t):
+            assert thickness / P.layer_h == pytest.approx(round(thickness / P.layer_h))
+
+    def test_comb_is_printed_in_fine_layers_so_the_steps_on_the_blade_faces_are_small(self):
+        # Every layer the blade gains is a ledge on the wall cards slide down.
+        # At 0.2 mm a deck with a tenth air went from 32 clean drops in 32 to 29;
+        # a sleeve's edge has a radius of about 0.3 mm.
+        assert P.layer_h <= 0.1
 
     def test_rule_1_blades_fan_out_from_a_hinge_far_above_the_rim(self):
         assert P.fan_R > 3 * P.sleeve_h
@@ -567,7 +574,8 @@ pytest.importorskip("mujoco")
 from physics_sim import COMB, ESCAPED, FLOP, PERCHED, Conditions  # noqa: E402
 
 ROUND, FLAT = Conditions(card_bottom="round"), Conditions(card_bottom="flat")
-RIGID = replace(ROUND, blade_E=0.0)
+SMOOTH = replace(ROUND, blade_steps=False)          # blades as a smooth taper: how versions 1 to 7 were tested
+RIGID = replace(SMOOTH, blade_E=0.0)
 SEEDS = (1, 2, 3)
 
 
@@ -667,7 +675,7 @@ V6 = replace(P, machine_tilt_deg=2.0, **SHORT_BINS)                           # 
 OLD_BODY = dict(n_channels=14, hopper_lean_deg=0.0, fence_h=60.0, tube_clear=22.0, finger_slot=0.0)
 V1 = replace(SIXTY, fan_R=0.0, blade_t=1.2, channel_w=3.5, tip_land=0.4, bevel_h=3.0, **OLD_BODY)
 V2 = replace(SIXTY, fan_R=0.0, blade_t=0.8, channel_w=4.2, tip_land=0.2, bevel_h=2.0, **OLD_BODY)
-RIGID_FLAT = replace(FLAT, blade_E=0.0)
+RIGID_FLAT = replace(FLAT, blade_E=0.0, blade_steps=False)
 FROM_THE_TOP = replace(ROUND, release_height=90.0)
 
 
@@ -743,7 +751,7 @@ class TestPhysicsExplainsTheDesign:
         tight = replace(ROUND, card_t=0.63)
         narrowest = min(P.channel_width(i, P.tip_z(i)) for i in range(P.n_channels))
         assert narrowest - (P.cards_per_channel + 0.5) * tight.card_t < 0.1     # no margin left
-        assert _score(P, replace(tight, blade_E=0.0), drops=8).delivered_frac < 0.92
+        assert _score(P, replace(tight, blade_E=0.0, blade_steps=False), drops=8).delivered_frac < 0.92
         assert _score(P, tight, drops=8).delivered_frac > 0.98
 
 
@@ -751,7 +759,7 @@ class TestTheHundredCardMachine:
     """What changed between version 5 and today, and why."""
 
     def test_v5_locked_solid_when_the_deck_was_dropped_from_the_top_of_the_hopper(self):
-        assert _score(V5, FROM_THE_TOP, drops=8).delivered_frac < 0.90
+        assert _score(V5, replace(SMOOTH, release_height=90.0), drops=8).delivered_frac < 0.90
 
     def test_today_a_drop_from_the_top_never_jams_the_comb(self):
         from_the_top = _score(P, FROM_THE_TOP)
@@ -760,7 +768,7 @@ class TestTheHundredCardMachine:
         assert from_the_top.clean >= 14
 
     def test_v6_short_shallow_bins_left_cards_under_the_tower_for_later_ones_to_catch_on(self, today):
-        from_the_top_v6 = _score(V6, FROM_THE_TOP)
+        from_the_top_v6 = _score(V6, replace(SMOOTH, release_height=90.0))
         from_the_top_today = _score(P, FROM_THE_TOP)
         assert sum(from_the_top_v6.jams.values()) >= sum(from_the_top_today.jams.values()) + 5
         assert today.clean >= 15
@@ -768,10 +776,20 @@ class TestTheHundredCardMachine:
     def test_v6_needed_its_lean_only_because_of_those_bins(self, today):
         # With short bins a level machine left more stray cards than a leaning
         # one.  With today's bins a level machine leaves none, so it is level.
-        v6_level = _score(replace(V6, machine_tilt_deg=0.0), drops=32)
-        v6_leaning = _score(V6, drops=32)
+        v6_level = _score(replace(V6, machine_tilt_deg=0.0), SMOOTH, drops=32)
+        v6_leaning = _score(V6, SMOOTH, drops=32)
         assert sum(v6_level.jams.values()) >= sum(v6_leaning.jams.values()) + 4
         assert sum(today.jams.values()) == 0
+
+
+class TestBladesAsPrinted:
+    """Version 7 modelled each blade as a smooth taper.  Printed, it thickens one layer at a time."""
+
+    def test_coarse_layer_steps_on_the_blade_faces_catch_a_tight_deck(self):
+        nearly_solid = replace(ROUND, card_t=0.66)
+        coarse = _score(replace(P, layer_h=0.2), nearly_solid, drops=8)
+        fine = _score(P, nearly_solid, drops=8)
+        assert coarse.delivered_frac < fine.delivered_frac - 0.04
 
 
 class TestKnownLimits:

@@ -6,7 +6,7 @@ bins, stack them, repeat.
 
 **Status: designed and simulated, not printed.** The geometry is checked by
 the test suite and by a rigid-body physics simulation (MuJoCo). The design has
-been through eight versions, each driven by a failure in that simulation. The
+been through nine versions, each driven by a failure in that simulation. The
 current one delivers every card in 64 of 64 simulated drops under nominal
 conditions (90 and 100 cards) and at least 98% of cards in every condition
 except a nearly solid deck. It still has known limits, listed below, and a
@@ -32,7 +32,7 @@ simulation of rigid cards is not a print.
 ## What makes the comb not jam
 
 Getting 60 cards through a comb under their own weight was the whole problem.
-Six things turned out to matter, and removing any one of them brings the jams
+Seven things turned out to matter, and removing any one of them brings the jams
 back (each is a test in section 9 of `test_shuffler.py`):
 
 - **The blades fan out.** They are tilted like the ribs of a fan hinged 400 mm
@@ -50,13 +50,17 @@ back (each is a test in section 9 of `test_shuffler.py`):
   hopper tilts the cards against half the channels, and a deck dropped from
   the top then locked solid in 8 drops of 16. Once the bins were fixed (below)
   neither lean was needed.
-- **The blade tips are thin enough to give.** The top 27 mm of each blade is a
-  single 0.2 mm layer. Modelled as a rigid knife, a deck with a tenth of its
+- **The blade tips are thin enough to give.** The top 14 mm of each blade is a
+  0.2 mm film, and it stays under 0.4 mm for 27 mm. Modelled as a rigid knife, a deck with a tenth of its
   thickness air jams in 25 drops of 32. Modelled as the PETG film it would
   really be, the tips give by under half a millimetre and the same deck
   delivers 99.6%. The result is the same from a third to three times the
   stiffness of PETG, so it is not finely tuned. Do not thicken the tips.
 
+- **The comb is printed in 0.1 mm layers.** A blade printed flat thickens one
+  layer at a time, and every layer is a small ledge on the wall cards slide
+  down. With 0.2 mm ledges a deck with a tenth air went from 32 clean drops in
+  32 to 29, and a nearly solid one from 90% delivered to 78%.
 - **Cards must get clear of the tower.** With 40 degree ramps and bins barely
   longer than a card, some cards stopped short of the fence with a corner
   still under the tower, and later cards landed on them. Steeper ramps and
@@ -77,29 +81,39 @@ Unless stated, results are for rounded edges and flexible tips, 32 drops each.
 
 ![physics](physics.png)
 
+Blades modelled as printed, thickening in 0.1 mm steps:
+
 | Condition | Clean drops | Cards delivered | What went wrong |
 |---|---|---|---|
 | 100 cards | 32 of 32 | 100% | |
+| Dropped from the top of the hopper (90 mm) | 32 of 32 | 100% | |
+| Tight deck, 10% air | 32 of 32 | 100% | |
+| Grippy cards (friction 0.35 / 0.50) | 30 of 32 | 99.9% | one card left, twice |
+| Tight deck, 6% air | 8 of 32 | 89.9% | packets wedge part way down the comb |
+| 100 cards, square edges | 9 of 32 | 98.9% | cards perched on or lying across blade tips |
+
+Blades modelled as a smooth taper (quicker to simulate, slightly optimistic
+for tight decks and grippy cards):
+
+| Condition | Clean drops | Cards delivered | What went wrong |
+|---|---|---|---|
 | 90 cards | 32 of 32 | 100% | |
 | 60 cards | 31 of 32 | 99.9% | one card perched once |
 | Dropped from 30 mm | 32 of 32 | 100% | |
 | Dropped from 50 mm | 32 of 32 | 100% | |
-| Dropped from the top of the hopper (90 mm) | 32 of 32 | 100% | |
 | Deck leaning 4 degrees in the hopper | 32 of 32 | 100% | |
 | Table 3 degrees off level, forwards | 32 of 32 | 100% | |
 | Table 3 degrees off level, backwards | 30 of 32 | 99.9% | a stray card in 2 drops |
 | Slippery cards (friction 0.12 / 0.20) | 32 of 32 | 100% | |
-| Grippy cards (0.35 / 0.50) | 32 of 32 | 100% | |
 | Tight deck, 12% air | 32 of 32 | 100% | |
-| Tight deck, 10% air | 31 of 32 | 100.0% | one card perched once |
-| Tight deck, 6% air | 18 of 32 | 93.9% | packets wedge part way down the comb |
-| 100 cards, square edges | 9 of 32 | 98.5% | cards perched on or lying across blade tips |
 | Rigid blade tips, 10% air | 1 of 32 | 67% | comb jams in 29 drops |
+
+No condition here stops the whole deck.
 
 ## Known limits
 
 - **A nearly solid deck loses cards.** With flexible tips, decks down to a
-  tenth air deliver 99.9%. One squeezed to 6% air delivers 93%: a packet of
+  tenth air deliver 100%. One squeezed to 6% air delivers 90%: a packet of
   eight such cards is 5.3 mm thick and wedges about 40 mm down a channel that
   is 5.2 mm wide there. A stronger fan (300 mm hinge) raised that to 97% in an
   earlier test but cost clean drops at nominal, so it is not the default.
@@ -165,9 +179,10 @@ supports. 40 pieces in all.
 
 `out/assembly.step` is the whole machine for viewing or editing in CAD.
 
-Settings: 0.4 mm nozzle, **0.2 mm layers** (blade tips are exactly one layer),
-3 perimeters. Use PETG for the slices: the top 27 mm of each blade is a
-single-layer film and is meant to flex. PLA is fine for everything else.
+Settings: 0.4 mm nozzle, 3 perimeters. Print the comb slices at **0.1 mm
+layers** in PETG: the top of each blade is a 0.2 mm film that is meant to
+flex, and the blade thickens one layer at a time below it. Everything else can
+be 0.2 mm layers in PLA.
 
 ## Assembly
 
@@ -199,7 +214,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 120 checks, about 30 minutes on 4 cores
+pytest test_shuffler.py           # 122 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
@@ -220,4 +235,5 @@ Each of these was simulated and made things worse or no better: raked
 blades starting lower, lane walls reaching into the bins at two heights, a
 hopper flared below the ring, a ring raised above the deck, a hopper that
 leans on its own, a single leading centre blade, wider blade spacing,
-thinner lower blades, and a forward-shifted hopper.
+thinner lower blades, a forward-shifted hopper, a finer comb, and blades on
+the outer side of their channels.

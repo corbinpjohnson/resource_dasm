@@ -64,6 +64,13 @@ class Params:
     bevel_h: float = 110.0        # height over which a blade thickens from tip to full.  With
                                   # the fan this keeps every channel widening all the way down
     chevron_step: float = 3.5     # each blade's tip is this much lower than its inner neighbour
+    blade_outside: bool = False   # True puts each blade on the outer side of its own channel with
+                                  # an extra divider in the middle.  Tried, to move the layer steps
+                                  # off the wall cards ride on; worse, because the taper then
+                                  # pushes cards inwards
+    layer_h: float = 0.1          # layer height the comb slices are printed at.  The blade thickens
+                                  # by this much at each step, and each step is a small ledge on
+                                  # the wall cards slide down: at 0.2 mm they catch tight packets
     centre_drop: float = 0.0      # the second of the two middle blades starts this much lower,
                                   # so the first cut is made by one blade, not two back to back
     roof_deg: float = 12.0        # (rake_deg = 0 only) blade top slopes away from a central peak
@@ -212,31 +219,40 @@ class Params:
         """Which bin channel i feeds."""
         return "LR"[i % 2]
 
-    def blade_in_front(self, i: int) -> bool:
-        """Slices in the back half carry their blade on the front of the channel.
+    def slice_plane(self, i: int) -> tuple[int, int]:
+        """Where slice i sits on the fan: (plane, direction).
 
-        Every blade is then on the side of its own channel nearest the centre,
-        every bevel faces outwards, and the two middle blades sit back to back.
-        """
-        return i < self.n_channels // 2
-
-    def blade_w(self, i: int) -> tuple[float, float]:
-        """Depth range occupied by blade i."""
-        w0 = i * self.pitch
-        return (w0 + self.channel_w, w0 + self.pitch) if self.blade_in_front(i) else (w0, w0 + self.blade_t)
-
-    def channel_range(self, i: int) -> tuple[float, float]:
-        w0 = i * self.pitch
-        return (w0, w0 + self.channel_w) if self.blade_in_front(i) else (w0 + self.blade_t, w0 + self.pitch)
-
-    def tip_z(self, i: int) -> float:
-        """Height of the peak of blade i: a chevron with a single highest blade.
-
-        The two middle blades sit back to back.  If they were the same height
-        their tips would add up to a flat twice as wide, and the physics test
-        shows a card regularly comes to rest on it, so only one of them leads.
+        `plane` counts blade spacings from the centre plane; the flat back of
+        the slice's blade lies on it.  `direction` is +1 if the blade's body and
+        the rest of the slice extend towards the front from there, -1 if
+        towards the back.
         """
         mid = self.n_channels // 2
+        if self.blade_outside:
+            return (i - mid + 1, -1) if i >= mid else (-(mid - i), +1)
+        return (i - mid, +1) if i >= mid else (-(mid - 1 - i), -1)
+
+    def blade_in_front(self, i: int) -> bool:
+        """True if slice i is the mirror image of the basic slice (direction -1)."""
+        return self.slice_plane(i)[1] < 0
+
+    def blade_w(self, i: int) -> tuple[float, float]:
+        """Depth range occupied by blade i at the rim."""
+        plane, d = self.slice_plane(i)
+        w = self.depth / 2 + plane * self.pitch
+        return tuple(sorted((w, w + d * self.blade_t)))
+
+    def channel_range(self, i: int) -> tuple[float, float]:
+        """Depth range of channel i at the rim."""
+        plane, d = self.slice_plane(i)
+        w = self.depth / 2 + plane * self.pitch
+        return tuple(sorted((w + d * self.blade_t, w + d * self.pitch)))
+
+    def tip_z(self, i: int) -> float:
+        """Height of the peak of blade i: a chevron, highest in the middle."""
+        mid = self.n_channels // 2
+        if self.blade_outside:
+            return -self.tip_guard - self.chevron_step * abs(self.slice_plane(i)[0])
         if i == mid - 1 and self.centre_drop > 0:
             return -self.tip_guard - self.centre_drop
         return -self.tip_guard - self.chevron_step * abs(i - mid)
@@ -257,15 +273,22 @@ class Params:
         """Half-width of a blade below the collar."""
         return self.cx + self.exit_clear
 
-    def blade_top(self, i: int) -> list[Point]:
-        """Top edge of blade i across the collar opening, left to right."""
-        peak = self.tip_z(i)
+    def top_from_peak(self, peak: float, parity: int = 0) -> list[Point]:
+        """Top edge of a blade whose highest point is at `peak`, left to right."""
         if self.rake_deg > 0:
             drop = 2 * self.cx * math.tan(math.radians(self.rake_deg))
-            ends = (peak, peak - drop) if i % 2 == 0 else (peak - drop, peak)
+            ends = (peak, peak - drop) if parity % 2 == 0 else (peak - drop, peak)
             return [(-self.cx, ends[0]), (self.cx, ends[1])]
         eave = peak - self.cx * math.tan(math.radians(self.roof_deg))
         return [(-self.cx, eave), (0.0, peak), (self.cx, eave)]
+
+    def blade_top(self, i: int) -> list[Point]:
+        """Top edge of blade i across the collar opening, left to right."""
+        return self.top_from_peak(self.tip_z(i), i)
+
+    def divider_top(self) -> list[Point]:
+        """Top edge of the extra blade in the middle: the one that leads."""
+        return self.top_from_peak(-self.tip_guard)
 
     @property
     def top_drop(self) -> float:
@@ -565,14 +588,14 @@ def build_slice(p: Params, i: int):
     exit_sign = -1 if side == "L" else 1
     thick = p.pitch * p.spread(p.z_base) + 2      # more than the widest the channel gets
 
-    # Blade: one 0.2 mm layer at the tip, gaining a layer every so often on the way down.
-    layers = max(2, round(p.blade_t / p.tip_land))
+    # Blade: tip_land thick at the tip, gaining one printed layer at a time on the way down.
+    n_terr = max(1, round((p.blade_t - p.tip_land) / p.layer_h))
     outline = p.blade_outline(i)
-    body = _prism(outline, 0.0, p.blade_t / layers)
-    for k in range(1, layers):
-        a = k * p.blade_t / layers
-        lam = _prism(outline, a, a + p.blade_t / layers)
-        body = body.union(lam.cut(_prism(p.above_taper_line(i, k * p.bevel_h / (layers - 1)), a - 1, a + 1)))
+    body = _prism(outline, 0.0, p.tip_land)
+    for k in range(1, n_terr + 1):
+        a = p.tip_land + (k - 1) * p.layer_h
+        lam = _prism(outline, a, a + p.layer_h)
+        body = body.union(lam.cut(_prism(p.above_taper_line(i, k * p.bevel_h / n_terr), a - 1, a + 1)))
 
     # Ramp rib, a short piece of the opposite rib (spacer round the far tie
     # bar) and the collar walls, all filling the channel up to the next blade.

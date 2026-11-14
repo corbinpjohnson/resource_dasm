@@ -76,64 +76,89 @@ def _placed(p: Params, geoms: list[str], steps: float) -> str:
     return f'<body pos="0 {steps * p.pitch * MM} 0">' + "".join(geoms) + "</body>"
 
 
-def machine_xml(p: Params, meshes: _Meshes, blade_E: float = 0.0) -> list[str]:
-    out: list[str] = []
+def _blade_geoms(p: Params, meshes: _Meshes, W, top, blade_E: float, steps: bool) -> list[str]:
+    """One blade, flat back on the plane w = 0 of the local frame `W`."""
+    g: list[str] = []
     bottom = p.z_lo - p.rib_d
+    wb = p.blade_t
+    full = p.bevel_h                      # depth below the top edge where the blade is full thickness
+    base = max(min(z for _, z in top) - full, bottom + 1)
+    g.append(_box(-p.bx, p.bx, W(0), W(wb), bottom, base))
+    # The taper runs the full width of the blade, ears included, so its face is flush.
+    edge = [(-p.px, top[0][1]), *top, (p.px, top[-1][1])]
+    t_at = lambda z_top, z: p.tip_land + (wb - p.tip_land) * min(1.0, (z_top - z) / full)
+    # With blade_E > 0 the thinnest part of each blade (down to where it gains
+    # its second layer) is a separate flap on a sprung hinge: a printed
+    # one-layer tip is a film, not a rigid knife.
+    n_terr = max(1, round((wb - p.tip_land) / p.layer_h))     # one terrace per printed layer
+    step = full / n_terr                                      # height of each terrace
+    film = max(1, round(p.tip_land / p.layer_h))              # terraces thinner than two tip thicknesses flex
+    flap_len = film * step if blade_E > 0 else 0.0
+    flap: list[str] = []
+    for (xa, za), (xb, zb) in zip(edge, edge[1:]):
+        lo_a, lo_b = max(za - full, base), max(zb - full, base)
+        hinged = flap_len > 0 and abs(xa) <= p.cx + 1e-9 and abs(xb) <= p.cx + 1e-9
+        if steps:
+            # As printed: the blade gains one 0.2 mm layer at a time, leaving
+            # a small ledge on one face at each step.
+            for k in range(n_terr):
+                t = p.tip_land + k * p.layer_h
+                pts = [(xx, W(w), max(zz - d, base)) for w in (0, t)
+                       for d in (k * step, (k + 1) * step) for xx, zz in ((xa, za), (xb, zb))]
+                (flap if hinged and k < film else g).append(meshes.hull(pts))
+            if min(lo_a, lo_b) > base + 0.5:
+                g.append(meshes.hull([(xx, W(w), zz) for w in (0, wb)
+                                      for xx, zz in ((xa, lo_a), (xb, lo_b), (xa, base), (xb, base))]))
+            continue
+        ca, cb = (za - flap_len, zb - flap_len) if hinged else (za, zb)      # top of the rigid part
+        g.append(meshes.hull([(xx, W(w), zz) for w in (0, wb) for xx, zz in ((xa, base), (xb, base))]
+                             + [(xa, W(w), lo_a) for w in (0, t_at(za, lo_a))]
+                             + [(xb, W(w), lo_b) for w in (0, t_at(zb, lo_b))]
+                             + [(xa, W(w), ca) for w in (0, t_at(za, ca))]
+                             + [(xb, W(w), cb) for w in (0, t_at(zb, cb))]))
+        if hinged:
+            flap.append(meshes.hull([(xa, W(w), ca) for w in (0, t_at(za, ca))]
+                                    + [(xb, W(w), cb) for w in (0, t_at(zb, cb))]
+                                    + [(xx, W(w), zz) for w in (0, p.tip_land) for xx, zz in ((xa, za), (xb, zb))]))
+    if flap:
+        inertia = 2 * p.cx * p.tip_land ** 3 / 12                    # mm^4, of the one-layer film
+        k = 3 * blade_E * inertia / flap_len * 1e-3                  # N.m/rad: same tip deflection as a cantilever
+        hinge_z = sum(z for _, z in top) / len(top) - flap_len
+        g.append(f'<body><joint type="hinge" axis="1 0 0" pos="0 {W(p.tip_land / 2) * MM} {hinge_z * MM}" '
+                 f'stiffness="{k}" damping="{0.02 * k}" armature="1e-7" range="-0.5 0.5" limited="true"/>'
+                 + "".join(flap) + "</body>")
+    for sg in (-1, 1):
+        a, b = sorted((sg * p.cx, sg * p.px))
+        g.append(_box(a, b, W(0), W(p.tip_land), edge[0 if sg < 0 else -1][1], 0))   # blade ear, one layer
+    return g
+
+
+def machine_xml(p: Params, meshes: _Meshes, blade_E: float = 0.0, steps: bool = True) -> list[str]:
+    out: list[str] = []
     c = p.depth / 2
     mid = p.n_channels // 2
     for i in range(p.n_channels):
-        # Each slice is built at the centre plane (blade first, channel after)
-        # and then moved out.  Back-half slices are mirrored.
-        front = not p.blade_in_front(i)
-        W = (lambda w: c + w) if front else (lambda w: c - w)
-        steps = (i - mid) if front else -(mid - 1 - i)
-        wb = p.blade_t
-        far = lambda z: p.pitch * p.spread(z)         # the next blade's face, seen from this slice
-        g: list[str] = []
+        # Each slice is built on the centre plane (blade first, then everything
+        # that fills its channel) and then moved out to its own plane.
+        plane, direction = p.slice_plane(i)
+        W = (lambda w: c + w) if direction > 0 else (lambda w: c - w)
+        # the channel ends at the next plane, or at the middle divider's face
+        shy = p.blade_t if p.blade_outside and plane + direction == 0 and direction < 0 else 0.0
+        far = lambda z, shy=shy: p.pitch * p.spread(z) - shy
         side = p.side(i)
         other = "R" if side == "L" else "L"
         exit_sign = -1 if side == "L" else 1
-        top = p.blade_top(i)
-        full = p.bevel_h                      # depth below the top edge where the blade is full thickness
-        base = max(min(z for _, z in top) - full, bottom + 1)
-        g.append(_box(-p.bx, p.bx, W(0), W(wb), bottom, base))
-        # The taper runs the full width of the blade, ears included, so its face is flush.
-        edge = [(-p.px, top[0][1]), *top, (p.px, top[-1][1])]
-        t_at = lambda z_top, z: p.tip_land + (wb - p.tip_land) * min(1.0, (z_top - z) / full)
-        # With blade_E > 0 the thinnest part of each blade (down to where it gains
-        # its second layer) is a separate flap on a sprung hinge: a printed
-        # one-layer tip is a film, not a rigid knife.
-        flap_len = full / max(1, round(wb / p.tip_land) - 1) if blade_E > 0 else 0.0
-        flap: list[str] = []
-        for (xa, za), (xb, zb) in zip(edge, edge[1:]):
-            lo_a, lo_b = max(za - full, base), max(zb - full, base)
-            hinged = flap_len > 0 and abs(xa) <= p.cx + 1e-9 and abs(xb) <= p.cx + 1e-9
-            ca, cb = (za - flap_len, zb - flap_len) if hinged else (za, zb)      # top of the rigid part
-            g.append(meshes.hull([(xx, W(w), zz) for w in (0, wb) for xx, zz in ((xa, base), (xb, base))]
-                                 + [(xa, W(w), lo_a) for w in (0, t_at(za, lo_a))]
-                                 + [(xb, W(w), lo_b) for w in (0, t_at(zb, lo_b))]
-                                 + [(xa, W(w), ca) for w in (0, t_at(za, ca))]
-                                 + [(xb, W(w), cb) for w in (0, t_at(zb, cb))]))
-            if hinged:
-                flap.append(meshes.hull([(xa, W(w), ca) for w in (0, t_at(za, ca))]
-                                        + [(xb, W(w), cb) for w in (0, t_at(zb, cb))]
-                                        + [(xx, W(w), zz) for w in (0, p.tip_land) for xx, zz in ((xa, za), (xb, zb))]))
-        if flap:
-            inertia = 2 * p.cx * p.tip_land ** 3 / 12                    # mm^4, of the one-layer film
-            k = 3 * blade_E * inertia / flap_len * 1e-3                  # N.m/rad: same tip deflection as a cantilever
-            hinge_z = sum(z for _, z in top) / len(top) - flap_len
-            g.append(f'<body><joint type="hinge" axis="1 0 0" pos="0 {W(p.tip_land / 2) * MM} {hinge_z * MM}" '
-                     f'stiffness="{k}" damping="{0.02 * k}" armature="1e-7" range="-0.5 0.5" limited="true"/>'
-                     + "".join(flap) + "</body>")
+        g = _blade_geoms(p, meshes, W, p.blade_top(i), blade_E, steps)
         for sg in (-1, 1):
             a, b = sorted((sg * p.cx, sg * p.px))
-            g.append(_box(a, b, W(0), W(p.tip_land), edge[0 if sg < 0 else -1][1], 0))   # blade ear, one layer
             h = p.collar_h if sg == -exit_sign else p.boss_short
             g.append(meshes.hull([(x, W(w), z) for x in (a, b) for z in (0.0, -h) for w in (0.0, far(z))]))  # collar wall
         x_far = -exit_sign * p.bar_x
         for pts in (p.rib_outline(side), p.rib_outline(other, x_far - 8, x_far + 8)):
             g.append(meshes.hull([(x, W(w), z) for x, z in pts for w in (0.0, far(z))]))
-        out.append(_placed(p, g, steps))
+        out.append(_placed(p, g, plane))
+    if p.blade_outside:                                   # the extra blade in the middle
+        out.append(_placed(p, _blade_geoms(p, meshes, lambda w: c + w, p.divider_top(), blade_E, steps), 0))
 
     if p.hopper_h > 0:
         t = p.hopper_t
@@ -178,6 +203,7 @@ class Conditions:
     release_height: float = 2.0    # bottom of the deck above the highest blade tip at release
     lean_deg: float = 0.0          # deck leaning by this much more (or less) than the hopper does
     x_jitter: float = 0.5          # cards are not perfectly squared up, +/- this
+    blade_steps: bool = True       # blades thicken in one-layer steps, as printed (False: a smooth taper)
     tilt_deg: float = 0.0          # the table is off level: tipped back by this much more than the feet give
     blade_E: float = 2000.0        # Young's modulus of the blades, MPa (PETG).  The one-layer blade
                                    # tips then flex as a printed film would.  0: perfectly rigid
@@ -186,7 +212,7 @@ class Conditions:
 
 def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditions()) -> str:
     meshes = _Meshes()
-    static = machine_xml(p, meshes, c.blade_E)
+    static = machine_xml(p, meshes, c.blade_E, c.blade_steps)
     hx, hy, hz = p.sleeve_w / 2 * MM, c.card_t / 2 * MM, p.sleeve_h / 2 * MM
     if c.card_bottom == "round":
         r = hy
