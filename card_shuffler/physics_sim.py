@@ -76,7 +76,7 @@ def _placed(p: Params, geoms: list[str], steps: float) -> str:
     return f'<body pos="0 {steps * p.pitch * MM} 0">' + "".join(geoms) + "</body>"
 
 
-def machine_xml(p: Params, meshes: _Meshes) -> list[str]:
+def machine_xml(p: Params, meshes: _Meshes, blade_E: float = 0.0) -> list[str]:
     out: list[str] = []
     bottom = p.z_lo - p.rib_d
     c = p.depth / 2
@@ -99,13 +99,32 @@ def machine_xml(p: Params, meshes: _Meshes) -> list[str]:
         g.append(_box(-p.bx, p.bx, W(0), W(wb), bottom, base))
         # The taper runs the full width of the blade, ears included, so its face is flush.
         edge = [(-p.px, top[0][1]), *top, (p.px, top[-1][1])]
+        t_at = lambda z_top, z: p.tip_land + (wb - p.tip_land) * min(1.0, (z_top - z) / full)
+        # With blade_E > 0 the thinnest part of each blade (down to where it gains
+        # its second layer) is a separate flap on a sprung hinge: a printed
+        # one-layer tip is a film, not a rigid knife.
+        flap_len = full / max(1, round(wb / p.tip_land) - 1) if blade_E > 0 else 0.0
+        flap: list[str] = []
         for (xa, za), (xb, zb) in zip(edge, edge[1:]):
             lo_a, lo_b = max(za - full, base), max(zb - full, base)
-            t_lo = lambda z_top, lo: p.tip_land + (wb - p.tip_land) * (z_top - lo) / full
+            hinged = flap_len > 0 and abs(xa) <= p.cx + 1e-9 and abs(xb) <= p.cx + 1e-9
+            ca, cb = (za - flap_len, zb - flap_len) if hinged else (za, zb)      # top of the rigid part
             g.append(meshes.hull([(xx, W(w), zz) for w in (0, wb) for xx, zz in ((xa, base), (xb, base))]
-                                 + [(xa, W(w), lo_a) for w in (0, t_lo(za, lo_a))]
-                                 + [(xb, W(w), lo_b) for w in (0, t_lo(zb, lo_b))]
-                                 + [(xx, W(w), zz) for w in (0, p.tip_land) for xx, zz in ((xa, za), (xb, zb))]))
+                                 + [(xa, W(w), lo_a) for w in (0, t_at(za, lo_a))]
+                                 + [(xb, W(w), lo_b) for w in (0, t_at(zb, lo_b))]
+                                 + [(xa, W(w), ca) for w in (0, t_at(za, ca))]
+                                 + [(xb, W(w), cb) for w in (0, t_at(zb, cb))]))
+            if hinged:
+                flap.append(meshes.hull([(xa, W(w), ca) for w in (0, t_at(za, ca))]
+                                        + [(xb, W(w), cb) for w in (0, t_at(zb, cb))]
+                                        + [(xx, W(w), zz) for w in (0, p.tip_land) for xx, zz in ((xa, za), (xb, zb))]))
+        if flap:
+            inertia = 2 * p.cx * p.tip_land ** 3 / 12                    # mm^4, of the one-layer film
+            k = 3 * blade_E * inertia / flap_len * 1e-3                  # N.m/rad: same tip deflection as a cantilever
+            hinge_z = sum(z for _, z in top) / len(top) - flap_len
+            g.append(f'<body><joint type="hinge" axis="1 0 0" pos="0 {W(p.tip_land / 2) * MM} {hinge_z * MM}" '
+                     f'stiffness="{k}" damping="{0.02 * k}" armature="1e-7" range="-0.5 0.5" limited="true"/>'
+                     + "".join(flap) + "</body>")
         for sg in (-1, 1):
             a, b = sorted((sg * p.cx, sg * p.px))
             g.append(_box(a, b, W(0), W(p.tip_land), edge[0 if sg < 0 else -1][1], 0))   # blade ear, one layer
@@ -159,11 +178,15 @@ class Conditions:
     release_height: float = 2.0    # bottom of the deck above the highest blade tip at release
     lean_deg: float = 0.0          # deck leaning by this much more (or less) than the hopper does
     x_jitter: float = 0.5          # cards are not perfectly squared up, +/- this
+    tilt_deg: float = 0.0          # the table is off level: tipped back by this much more than the feet give
+    blade_E: float = 2000.0        # Young's modulus of the blades, MPa (PETG).  The one-layer blade
+                                   # tips then flex as a printed film would.  0: perfectly rigid
+                                   # blades, which is pessimistic for tight decks
 
 
 def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditions()) -> str:
     meshes = _Meshes()
-    static = machine_xml(p, meshes)
+    static = machine_xml(p, meshes, c.blade_E)
     hx, hy, hz = p.sleeve_w / 2 * MM, c.card_t / 2 * MM, p.sleeve_h / 2 * MM
     if c.card_bottom == "round":
         r = hy
@@ -174,9 +197,10 @@ def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditio
         geoms = f'<geom class="card" type="box" size="{hx} {hy} {hz}" mass="{CARD_MASS}"/>'
     cards = "\n".join(f'<body name="c{k}"><freejoint/>{geoms}</body>' for k in range(n_cards))
     tc = 4 * timestep
+    tilt = math.radians(p.machine_tilt_deg + c.tilt_deg)     # the machine leans back: gravity is tilted in its frame
     return f"""
 <mujoco>
-  <option timestep="{timestep}" gravity="0 0 -9.81" cone="elliptic">
+  <option timestep="{timestep}" gravity="0 {-9.81 * math.sin(tilt)} {-9.81 * math.cos(tilt)}" cone="elliptic">
     <flag multiccd="enable"/>
   </option>
   <size memory="400M"/>
@@ -240,6 +264,8 @@ class Rig:
         self.n = n_cards or p.n_cards
         self.model = mujoco.MjModel.from_xml_string(build_xml(p, self.n, timestep, conditions))
         self.data = mujoco.MjData(self.model)
+        self.q0 = self.model.nq - 7 * self.n          # cards come after any blade-tip hinges
+        self.v0 = self.model.nv - 6 * self.n
 
     def drop(self, deck: list[int], rng: random.Random, max_time: float = 3.0,
              offset: float | None = None) -> DropResult:
@@ -264,12 +290,12 @@ class Rig:
         quat = [math.cos(lean / 2), math.sin(lean / 2), 0, 0]           # rotation about x
         for k, card in enumerate(deck):
             w_top = top_start + k * p.card_pitch
-            q = d.qpos[7 * card: 7 * card + 7]
+            q = d.qpos[self.q0 + 7 * card: self.q0 + 7 * card + 7]
             q[:] = [rng.uniform(-c.x_jitter, c.x_jitter) * MM,
                     (w_top + shift / 2) * MM,
                     (z0 - (1 - math.cos(lean)) * p.sleeve_h / 2) * MM, *quat]
         for card in set(range(self.n)) - set(deck):                      # unused cards: park them far away
-            d.qpos[7 * card: 7 * card + 3] = [0.5 + 0.01 * card, 0.5, p.z_base * MM + 0.05]
+            d.qpos[self.q0 + 7 * card: self.q0 + 7 * card + 3] = [0.5 + 0.01 * card, 0.5, p.z_base * MM + 0.05]
         res = DropResult()
         z_gate = (p.z_hi + p.sleeve_h / 2) * MM      # card centre height as it reaches the ramps
         steps_per_check = int(0.01 / self.model.opt.timestep)
@@ -277,16 +303,16 @@ class Rig:
         active = np.array(sorted(deck))
         while d.time < max_time:
             mj.mj_step(self.model, d, steps_per_check)
-            pos = d.qpos.reshape(self.n, 7)[:, :3]
+            pos = d.qpos[self.q0:].reshape(self.n, 7)[:, :3]
             for card in deck:
                 if card not in res.lane and pos[card, 2] < z_gate + 0.02:
                     res.lane[card] = p.lane_of(pos[card, 1] / MM, pos[card, 2] / MM)
-            speed = np.abs(d.qvel.reshape(self.n, 6)[active, :3]).max()
+            speed = np.abs(d.qvel[self.v0:].reshape(self.n, 6)[active, :3]).max()
             t_quiet = t_quiet + 0.01 if speed < 0.01 else 0.0
             if t_quiet > 0.15:
                 break
         res.settle_time = d.time
-        pos = d.qpos.reshape(self.n, 7)[:, :3] / MM
+        pos = d.qpos[self.q0:].reshape(self.n, 7)[:, :3] / MM
         res.final_pos = pos.copy()
         floor_z = min(z for _, z in p.bin_floor_outline()) - 2
         in_collar: list[int] = []

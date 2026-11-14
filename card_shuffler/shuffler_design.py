@@ -2,8 +2,9 @@
 
 How it works (see README.md for pictures):
 
-* The deck is dropped, short edge down, into a HOPPER whose throat ring holds
-  it upright.
+* A deck of up to 100 sleeved cards is lowered, short edge down, into a
+  HOPPER whose throat ring holds it upright.  The whole machine leans back
+  two degrees on wedge-shaped feet so no card can balance on a blade tip.
 * Under it is a COMB of thin blades that slices the deck into packets of
   about seven cards.  Three things about the comb were forced by the physics
   test (physics_sim.py) and none of them is optional:
@@ -53,10 +54,10 @@ class Params:
     sleeve_w: float = 67.0        # sleeved card, short side
     sleeve_h: float = 92.0        # sleeved card, long side
     card_pitch: float = 0.70      # deck thickness per sleeved card
-    n_cards: int = 60
+    n_cards: int = 100            # the largest deck it must take; 90 works too
 
     # --- the comb --------------------------------------------------------
-    n_channels: int = 12          # must be even: half go left, half right.  No more than the
+    n_channels: int = 18          # must be even: half go left, half right.  No more than the
                                   # deck needs: a narrower collar limits how far a deck can lean
     channel_w: float = 4.0        # gap between blades at the rim, below the taper
     blade_t: float = 1.0          # full thickness, reached only well down the blade
@@ -64,6 +65,8 @@ class Params:
     bevel_h: float = 110.0        # height over which a blade thickens from tip to full.  With
                                   # the fan this keeps every channel widening all the way down
     chevron_step: float = 3.5     # each blade's tip is this much lower than its inner neighbour
+    centre_drop: float = 0.0      # the second of the two middle blades starts this much lower,
+                                  # so the first cut is made by one blade, not two back to back
     roof_deg: float = 12.0        # (rake_deg = 0 only) blade top slopes away from a central peak
     rake_deg: float = 0.0         # blade top is one straight slope across the card, alternate
                                   # blades sloping opposite ways, so each blade enters the deck
@@ -106,8 +109,11 @@ class Params:
     throat_h: float = 32.0        # the ring holds the top of the deck upright at release; below
                                   # it the hopper is as deep as the comb so cards can spread
     hopper_t: float = 2.4
-    hopper_lean_deg: float = 4.0  # the hopper leans back, so the deck does: cards then meet the
-                                  # blades one side first and none is left balanced on a tip
+    hopper_lean_deg: float = 0.0  # the hopper stands square on the comb.  Leaning it (4 degrees was
+                                  # the previous design) tilts the cards against half the channels
+                                  # and locks the whole deck when it is dropped from a height
+    machine_tilt_deg: float = 2.0  # instead the whole machine leans back on wedge-shaped feet, so
+                                  # no card can balance on a blade tip but deck and comb stay square
     finger_slot: float = 54.0     # depth of the slots in the hopper sides, for lowering the deck
                                   # in by its edges (holding it by its faces squeezes it tight)
     post_w: float = 9.0           # width of the corner posts left beside each slot
@@ -224,7 +230,10 @@ class Params:
         their tips would add up to a flat twice as wide, and the physics test
         shows a card regularly comes to rest on it, so only one of them leads.
         """
-        return -self.tip_guard - self.chevron_step * abs(i - self.n_channels // 2)
+        mid = self.n_channels // 2
+        if i == mid - 1 and self.centre_drop > 0:
+            return -self.tip_guard - self.centre_drop
+        return -self.tip_guard - self.chevron_step * abs(i - mid)
 
     # ================= derived: outline in x ============================
     @property
@@ -580,7 +589,7 @@ def build_slice(p: Params, i: int):
 
 
 def build_hopper(p: Params):
-    """Leaning tube with a throat ring and finger slots; sits on the rim."""
+    """Tube with a throat ring and finger slots; sits on the rim."""
     import cadquery as cq
     back = min(0.0, p.hopper_shear(p.hopper_h)) - p.hopper_t     # how far the lean carries the top
     body = None
@@ -682,11 +691,17 @@ def build_wedge(p: Params, at: Point = (0.0, 0.0)):
 
 
 def build_foot(p: Params, side: str):
+    """Outrigger foot.  Its underside is cut at an angle so the machine leans back."""
+    import cadquery as cq
     sg = -1 if side == "L" else 1
     fx, c = sg * p.foot_x, p.depth / 2
     top = p.z_base + p.foot_h
     reach = wall_faces(p, p.z_base)[1] + p.foot_out
-    foot = _box(fx - p.foot_w / 2, fx + p.foot_w / 2, p.z_base, top, c - reach, c + reach)
+    w0, w1 = c - reach, c + reach
+    rise = (w1 - w0) * math.tan(math.radians(p.machine_tilt_deg))     # the front stands this much taller
+    prof = [(w0, top), (w1, top), (w1, p.z_base - rise), (w0, p.z_base)]
+    foot = (cq.Workplane("YZ").workplane(offset=fx - p.foot_w / 2)
+            .polyline([(z, w) for w, z in prof]).close().extrude(p.foot_w))
     a = wall_faces(p, top)[0] - p.fit            # the walls lean, so the slots are a little wider
     b = wall_faces(p, p.z_base)[1] + p.fit
     for lo, hi in ((c - b, c - a), (c + a, c + b)):
