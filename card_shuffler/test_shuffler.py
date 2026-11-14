@@ -13,7 +13,7 @@ Read top to bottom, these follow a deck through the machine:
     9. every fault the physics engine found on the way here, reproduced on
        purpose, so the reason for each design decision stays on record
 
-Run with:  pytest test_shuffler.py                   (about an hour on 4 cores)
+Run with:  pytest test_shuffler.py                   (about 35 minutes on 4 cores)
            pytest test_shuffler.py -k "not Physics and not Limits"   (15 seconds: geometry and statistics only)
 """
 

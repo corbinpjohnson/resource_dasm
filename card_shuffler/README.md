@@ -214,7 +214,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 122 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 122 checks, about 35 minutes on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
