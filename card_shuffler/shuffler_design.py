@@ -2,9 +2,8 @@
 
 How it works (see README.md for pictures):
 
-* A deck of up to 100 sleeved cards is lowered, short edge down, into a
-  HOPPER whose throat ring holds it upright.  The whole machine leans back
-  two degrees on wedge-shaped feet so no card can balance on a blade tip.
+* A deck of up to 100 sleeved cards is lowered or dropped, short edge down,
+  into a HOPPER whose throat ring holds it upright.
 * Under it is a COMB of thin blades that slices the deck into packets of
   about seven cards.  Three things about the comb were forced by the physics
   test (physics_sim.py) and none of them is optional:
@@ -82,13 +81,15 @@ class Params:
     exit_clear: float = 3.0       # blades extend this far past the collar
     boss_short: float = 14.0      # collar wall height on the side a card leaves by
     fall_clear: float = 3.0       # extra free fall beyond one card height
-    ramp_deg: float = 40.0
+    ramp_deg: float = 46.0        # steep enough that cards reach the fence even when they rub
     friction_deg: float = 22.0    # pessimistic sleeve-on-PLA friction angle
     rib_d: float = 16.0           # depth of the rib that carries a ramp
     bar_x: float = 18.0           # lower tie bars sit this far off centre
 
     # --- the bins --------------------------------------------------------
-    bin_extra: float = 5.0        # bin length beyond one card width
+    bin_extra: float = 35.0       # bin length beyond one card width.  Generous, so that a card
+                                  # which stops short is still clear of the comb: one left with a
+                                  # corner under the tower is what later cards got caught on
     bin_gap: float = 0.5          # gap between comb and bin floor
     bin_step: float = 0.6         # bin floor is this much lower than the ramp (no lip)
     floor_t: float = 3.0
@@ -109,11 +110,13 @@ class Params:
     throat_h: float = 32.0        # the ring holds the top of the deck upright at release; below
                                   # it the hopper is as deep as the comb so cards can spread
     hopper_t: float = 2.4
-    hopper_lean_deg: float = 0.0  # the hopper stands square on the comb.  Leaning it (4 degrees was
-                                  # the previous design) tilts the cards against half the channels
-                                  # and locks the whole deck when it is dropped from a height
-    machine_tilt_deg: float = 2.0  # instead the whole machine leans back on wedge-shaped feet, so
-                                  # no card can balance on a blade tip but deck and comb stay square
+    hopper_lean_deg: float = 0.0  # the hopper stands square on the comb.  Leaning it (4 degrees, in
+                                  # version 5) tilts the cards against half the channels and locks
+                                  # the whole deck when it is dropped from a height
+    machine_tilt_deg: float = 0.0  # the machine stands level.  Leaning the whole machine back two
+                                  # degrees (version 6) stopped cards arriving late, but so do
+                                  # bins long and steep enough to clear the tower, and those also
+                                  # cope with the deck being dropped in
     finger_slot: float = 54.0     # depth of the slots in the hopper sides, for lowering the deck
                                   # in by its edges (holding it by its faces squeezes it tight)
     post_w: float = 9.0           # width of the corner posts left beside each slot
@@ -121,6 +124,9 @@ class Params:
 
     # --- structure -------------------------------------------------------
     plate_t: float = 3.0
+    wall_split: float = -60.0     # each end wall is two pieces, lapped at this height, so that
+                                  # the lower one fits a 250 mm bed
+    wall_lap: float = 10.0
     bar: float = 6.0              # tie bar is bar x bar
     fit: float = 0.2              # clearance per side for anything that slides together
     head_t: float = 3.0
@@ -632,6 +638,11 @@ def build_shell(p: Params, side: str, front: bool):
         piece = _prism(pts, 0.0, p.plate_t)
         wall = piece if wall is None else wall.union(piece)
     wall = wall.cut(_prism(p.finger_notch(side), -1, p.plate_t + 1))
+    # The top of the tower wall is a separate plate (build_upper).  The two
+    # overlap in a half lap: this piece keeps the outer half.
+    far = 2 * p.width
+    wall = wall.cut(_box(-far, far, p.wall_split, 50, -1, p.plate_t / 2))
+    wall = wall.cut(_box(-far, far, p.wall_split + p.wall_lap, 50, -1, p.plate_t + 1))
     wall = _place(p, wall, out)
 
     c = p.depth / 2
@@ -646,6 +657,19 @@ def build_shell(p: Params, side: str, front: bool):
     fx, half = sg * p.foot_x, p.foot_w / 2 + p.fit
     body = body.cut(_box(fx - half, fx + half, p.z_base - 1, p.z_base + p.foot_h / 2, -300, 400))
     return body if front else body.mirror("XY", (0, 0, c))
+
+
+def build_upper(p: Params, front: bool):
+    """Top of an end wall: one plate across the tower, carrying both upper tie bars."""
+    out = p.n_channels - p.n_channels // 2
+    plate = _box(-p.px, p.px, p.wall_split, 5.0, 0.0, p.plate_t)
+    # inner half of the lap
+    plate = plate.cut(_box(-p.px - 1, p.px + 1, p.wall_split - 1, p.wall_split + p.wall_lap, p.plate_t / 2, p.plate_t + 1))
+    body = _trim(p, _place(p, plate, out))
+    for h in p.bar_holes():
+        if h[1] > p.wall_split:
+            body = body.cut(_bar_cut(p, h))
+    return body if front else body.mirror("XY", (0, 0, p.depth / 2))
 
 
 def wall_faces(p: Params, z: float) -> tuple[float, float]:
@@ -691,7 +715,7 @@ def build_wedge(p: Params, at: Point = (0.0, 0.0)):
 
 
 def build_foot(p: Params, side: str):
-    """Outrigger foot.  Its underside is cut at an angle so the machine leans back."""
+    """Outrigger foot.  If machine_tilt_deg is set its underside is cut at that angle."""
     import cadquery as cq
     sg = -1 if side == "L" else 1
     fx, c = sg * p.foot_x, p.depth / 2
@@ -733,6 +757,8 @@ def build_parts(p: Params) -> dict:
         parts[f"back_{side}"] = build_shell(p, side, front=False)
         parts[f"front_{side}"] = build_shell(p, side, front=True)
         parts[f"foot_{side}"] = build_foot(p, side)
+    parts["upper_front"] = build_upper(p, front=True)
+    parts["upper_back"] = build_upper(p, front=False)
     parts["hopper"] = build_hopper(p)
     for k, at in enumerate(bar_positions(p)):
         parts[f"bar_{k}"] = build_bar(p, at)
@@ -755,7 +781,7 @@ PRINT_ROTATION = {
     "wedge": ((0, 1, 0), 90),   # flat on its 2 mm face
     "foot": ((0, 1, 0), 90),    # on its side so the lap slots need no bridging
     "hopper": ((1, 0, 0), -90),  # upside down: throat on the bed, lugs on top
-    "jam": None,
+    "jam": None, "upper": None,
     "flipped": ((1, 0, 0), 180),  # back-half slices and front walls: turn over so the plate is on the bed
 }
 
@@ -773,6 +799,10 @@ def as_printed(name: str, solid, p: Params = Params()):
         solid = _unplace(p, solid, out if kind == "front" else -out)
         if kind == "front":
             kind = "flipped"
+    elif kind == "upper":
+        is_front = name.endswith("front")
+        solid = _unplace(p, solid, out if is_front else -out)
+        kind = "upper" if is_front else "flipped"
     rot = PRINT_ROTATION[kind]
     if rot:
         solid = solid.rotate((0, 0, 0), rot[0], rot[1])
@@ -783,7 +813,7 @@ def as_printed(name: str, solid, p: Params = Params()):
 def print_list(p: Params) -> dict[str, int]:
     """Distinct files to print and how many of each."""
     files = {f"slice_{i:02d}": 1 for i in range(p.n_channels)}
-    files.update({"back_L": 1, "back_R": 1, "front_L": 1, "front_R": 1,
+    files.update({"back_L": 1, "back_R": 1, "front_L": 1, "front_R": 1, "upper_front": 1, "upper_back": 1,
                   "bar_ear": 2, "bar_low": 2, "bar_bin": 2, "wedge": 6, "foot": 2, "hopper": 1,
                   "jam_key": 1})
     return files

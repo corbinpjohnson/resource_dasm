@@ -13,7 +13,7 @@ Read top to bottom, these follow a deck through the machine:
     9. every fault the physics engine found on the way here, reproduced on
        purpose, so the reason for each design decision stays on record
 
-Run with:  pytest test_shuffler.py                   (about 20 minutes on 4 cores)
+Run with:  pytest test_shuffler.py                   (about 30 minutes on 4 cores)
            pytest test_shuffler.py -k "not Physics and not Limits"   (15 seconds: geometry and statistics only)
 """
 
@@ -60,16 +60,12 @@ class TestDeckFitsTheHopperAndCollar:
         deck_top = -P.tip_guard + P.sleeve_h
         assert P.hopper_h - P.throat_h < deck_top <= P.hopper_h
 
-    def test_the_whole_machine_leans_back_a_couple_of_degrees(self):
-        # Gravity then pulls every card slightly to one side, so none can
-        # balance on a blade tip and arrive late.  On a level machine about a
-        # third of drops leave a stray card (section 9).
-        assert 1.5 <= P.machine_tilt_deg <= 3.0
-
-    def test_but_the_hopper_stands_square_on_the_comb(self):
-        # Version 5 leaned only the hopper.  That tilts the cards against half
-        # the channels, and a deck dropped from a height locked solid.
+    def test_nothing_leans(self):
+        # Version 5 leaned the hopper and version 6 leaned the whole machine,
+        # both to stop cards arriving late.  Bins that clear the tower made
+        # both unnecessary (section 9), and a leaning hopper was harmful.
         assert P.hopper_lean_deg == 0.0
+        assert P.machine_tilt_deg == 0.0
         assert P.hopper_shear(P.hopper_h) == 0.0
 
     def test_hopper_walls_stop_the_deck_leaning_far(self):
@@ -250,6 +246,11 @@ class TestBinsCatchAndReleaseTheCards:
     def test_bin_is_longer_than_a_card_is_wide(self):
         assert P.bin_len > P.sleeve_w
 
+    def test_a_card_that_stops_an_inch_short_of_the_fence_is_still_clear_of_the_comb(self):
+        # Cards left with a corner under the tower are what later cards got
+        # caught on (section 9).
+        assert P.bin_extra >= 25
+
     def test_end_fence_is_taller_than_a_card(self):
         # A card arrives at well over 1 m/s.  A 26 mm stop tripped it and it
         # somersaulted out; a 60 mm one held until the deck was dropped from
@@ -314,12 +315,12 @@ class TestPrintedHardwareClampsTheStack:
         underside_of_left_rib = P.ramp_z(P.bar_x, "L") - P.rib_d
         assert P.bar_z_low + P.hole / 2 < underside_of_left_rib
 
-    def test_feet_are_wedges_that_lean_the_machine_back(self):
+    def test_feet_are_flat_but_can_be_cut_as_wedges_to_lean_the_machine(self):
         from shuffler_design import build_foot
-        bb = build_foot(P, "L").val().BoundingBox()
-        rise = bb.zlen * math.tan(math.radians(P.machine_tilt_deg))
-        assert bb.ylen == pytest.approx(P.foot_h + rise, abs=0.05)
-        assert bb.ymin == pytest.approx(P.z_base - rise, abs=0.05)      # the front end reaches below the walls
+        flat = build_foot(P, "L").val().BoundingBox()
+        assert flat.ylen == pytest.approx(P.foot_h, abs=0.01)
+        leaning = build_foot(replace(P, machine_tilt_deg=2.0), "L").val().BoundingBox()
+        assert leaning.ylen == pytest.approx(P.foot_h + flat.zlen * math.tan(math.radians(2.0)), abs=0.05)
 
     def test_bin_bar_passes_through_the_end_stop(self):
         assert P.stop_t > P.hole * 1.5
@@ -360,6 +361,7 @@ class TestEveryPartIsPrintableAndNothingCollides:
         assert files["wedge"] == 6
         assert files["foot"] == 2
         assert files["hopper"] == files["jam_key"] == 1
+        assert files["upper_front"] == files["upper_back"] == 1
 
     def test_every_part_is_one_valid_solid(self, parts):
         for name, s in parts.items():
@@ -422,6 +424,21 @@ class TestEveryPartIsPrintableAndNothingCollides:
             bb = as_printed(name, parts[name], P).val().BoundingBox()
             assert bb.zlen == pytest.approx(P.plate_t + P.depth_at_base / 2, abs=4.0)
 
+    def test_end_walls_are_split_so_the_lower_pieces_fit_the_bed(self, parts):
+        lower = parts["back_L"].val().BoundingBox()
+        upper = parts["upper_back"].val().BoundingBox()
+        assert lower.ymax == pytest.approx(P.wall_split + P.wall_lap, abs=4)      # the walls lean with the fan
+        assert upper.ymin == pytest.approx(P.wall_split, abs=4)
+        assert lower.ymax - lower.ymin < P.bed[1]
+        assert P.wall_split < -P.collar_h, "the seam is below the collar, where only the outermost channels pass"
+
+    def test_the_two_wall_pieces_overlap_in_a_half_lap(self, parts):
+        # same height range, different halves of the wall thickness: no clash
+        assert P.wall_lap >= 8
+        local_upper = _unplace(P, parts["upper_front"], P.n_channels - MID)
+        lap_zone = _box(-P.px, P.px, P.wall_split + 1, P.wall_split + P.wall_lap - 1, -1, P.plate_t + 1)
+        assert local_upper.intersect(lap_zone).val().BoundingBox().zlen == pytest.approx(P.plate_t / 2, abs=0.05)
+
     def test_bin_floor_halves_meet_on_the_centre_plane(self, parts):
         c = P.depth / 2
         assert parts["front_L"].val().BoundingBox().zmin == pytest.approx(c, abs=1e-6)
@@ -450,10 +467,10 @@ class TestEveryPartIsPrintableAndNothingCollides:
                     assert _overlap_volume(pile, s) < 0.5, name
 
     def test_overall_size(self):
-        assert P.width < 320
-        assert P.height < 250, "tower walls must fit a 250 mm bed"
-        assert P.height + P.hopper_h < 340
-        assert P.depth_at_base + 2 * P.plate_t < 155
+        assert P.width < 365
+        assert P.height < 285            # taller than a 250 mm bed, which is why the end walls are in two pieces
+        assert P.height + P.hopper_h < 375
+        assert P.depth_at_base + 2 * P.plate_t < 185
 
 
 # ------------------------------------------------ 7. shuffle (statistical model)
@@ -643,8 +660,10 @@ class TestPhysicsEngineAgrees:
 # compare rates.  Every threshold is well clear of what was measured.
 # Versions 1 to 4 were 60-card machines tested with rigid blades, so they are
 # reproduced that way.  Version 5 was the first 100-card machine.
-SIXTY = replace(P, n_cards=60, n_channels=12, hopper_lean_deg=4.0, machine_tilt_deg=0.0)
-V5 = replace(P, hopper_lean_deg=4.0, machine_tilt_deg=0.0)      # 100 cards, leaning hopper, level machine
+SHORT_BINS = dict(ramp_deg=40.0, bin_extra=5.0)
+SIXTY = replace(P, n_cards=60, n_channels=12, hopper_lean_deg=4.0, machine_tilt_deg=0.0, **SHORT_BINS)
+V5 = replace(P, hopper_lean_deg=4.0, machine_tilt_deg=0.0, **SHORT_BINS)      # 100 cards, leaning hopper, level machine
+V6 = replace(P, machine_tilt_deg=2.0, **SHORT_BINS)                           # machine leaning back, short shallow bins
 OLD_BODY = dict(n_channels=14, hopper_lean_deg=0.0, fence_h=60.0, tube_clear=22.0, finger_slot=0.0)
 V1 = replace(SIXTY, fan_R=0.0, blade_t=1.2, channel_w=3.5, tip_land=0.4, bevel_h=3.0, **OLD_BODY)
 V2 = replace(SIXTY, fan_R=0.0, blade_t=0.8, channel_w=4.2, tip_land=0.2, bevel_h=2.0, **OLD_BODY)
@@ -737,11 +756,22 @@ class TestTheHundredCardMachine:
     def test_today_a_drop_from_the_top_never_jams_the_comb(self):
         from_the_top = _score(P, FROM_THE_TOP)
         assert from_the_top.jams.get(COMB, 0) == 0
-        assert from_the_top.delivered_frac > 0.96
+        assert from_the_top.delivered_frac > 0.99
+        assert from_the_top.clean >= 14
 
-    def test_on_a_level_machine_more_cards_arrive_late_and_get_left_behind(self, today):
-        level = _score(replace(P, machine_tilt_deg=0.0))
-        assert sum(level.jams.values()) >= sum(today.jams.values()) + 2
+    def test_v6_short_shallow_bins_left_cards_under_the_tower_for_later_ones_to_catch_on(self, today):
+        from_the_top_v6 = _score(V6, FROM_THE_TOP)
+        from_the_top_today = _score(P, FROM_THE_TOP)
+        assert sum(from_the_top_v6.jams.values()) >= sum(from_the_top_today.jams.values()) + 5
+        assert today.clean >= 15
+
+    def test_v6_needed_its_lean_only_because_of_those_bins(self, today):
+        # With short bins a level machine left more stray cards than a leaning
+        # one.  With today's bins a level machine leaves none, so it is level.
+        v6_level = _score(replace(V6, machine_tilt_deg=0.0), drops=32)
+        v6_leaning = _score(V6, drops=32)
+        assert sum(v6_level.jams.values()) >= sum(v6_leaning.jams.values()) + 4
+        assert sum(today.jams.values()) == 0
 
 
 class TestKnownLimits:

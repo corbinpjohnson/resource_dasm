@@ -106,13 +106,13 @@ def iso(p: Params, path: str) -> None:
     parts = build_parts(p)
     colours = {"slice": "#9ec1e6", "back": "#dcdcdc", "front": "#dcdcdc",
                "bar": "#555555", "wedge": "#d9534f", "foot": "#777777", "card": "#ffd27f",
-               "hopper": "#c9b8e8"}
+               "hopper": "#c9b8e8", "upper": "#cfcfcf"}
     views = [(False, "Assembled", (0.55, -0.35, 0.75)),
              (True, "Front wall removed, a pile in each bin", (0.35, -0.3, 0.9)),
              (True, "From above: the comb", (0.3, -0.8, 0.5))]
     fig, axes = plt.subplots(1, 3, figsize=(20, 7.5))
     for ax, (hide_front, title, view) in zip(axes, views):
-        items = [(n, s) for n, s in parts.items() if not (hide_front and n.startswith("front"))]
+        items = [(n, s) for n, s in parts.items() if not (hide_front and n.startswith(("front", "upper_front")))]
         if hide_front and "pile" in title:
             items += [("card_L", resting_pile(p, "L")), ("card_R", resting_pile(p, "R"))]
         tris, cols = [], []
