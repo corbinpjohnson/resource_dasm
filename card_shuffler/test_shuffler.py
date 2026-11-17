@@ -13,7 +13,7 @@ Read top to bottom, these follow a deck through the machine:
     9. every fault the physics engine found on the way here, reproduced on
        purpose, so the reason for each design decision stays on record
 
-Run with:  pytest test_shuffler.py                   (about 35 minutes on 4 cores)
+Run with:  pytest test_shuffler.py                   (about 40 minutes on 4 cores)
            pytest test_shuffler.py -k "not Physics and not Limits"   (15 seconds: geometry and statistics only)
 """
 
@@ -558,6 +558,29 @@ class TestRepeatedDropsShuffleTheDeck:
         paired = replace(MODEL, pattern="LLRR")
         assert mean_neighbours_kept(N, 6, MODEL, 300) < mean_neighbours_kept(N, 6, paired, 300)
 
+    def test_restacking_habits_do_not_change_how_many_drops_are_needed(self):
+        # Turning the deck round every other drop, putting either pile on top
+        # at random, or cutting the deck: by 15 drops all mix the same.  Only
+        # the packet size matters.
+        def kept_after(habit, passes=15, trials=200):
+            rng = random.Random(9)
+            total = 0.0
+            for _ in range(trials):
+                deck = list(range(N))
+                for k in range(passes):
+                    left, right = one_pass(deck, MODEL, rng)
+                    deck = left + right if (habit != "random" or rng.random() < 0.5) else right + left
+                    if habit == "turn" and k % 2 == 0:
+                        deck = deck[::-1]
+                    if habit == "cut":
+                        c = rng.randrange(N)
+                        deck = deck[c:] + deck[:c]
+                total += sum(1 for a, b in zip(deck, deck[1:]) if abs(a - b) == 1) / (N - 1)
+            return total / trials
+        plain = kept_after("plain")
+        for habit in ("turn", "random", "cut"):
+            assert kept_after(habit) == pytest.approx(plain, abs=0.03), habit
+
     def test_a_finer_comb_needs_fewer_drops(self):
         assert passes_needed(N, replace(MODEL, cards_per_channel=5.0)) < passes_needed(N, MODEL)
 
@@ -792,6 +815,22 @@ class TestBladesAsPrinted:
         assert coarse.delivered_frac < fine.delivered_frac - 0.04
 
 
+class TestTriedAndRejected:
+    """Ideas that looked promising and failed in simulation."""
+
+    def test_a_second_row_of_short_blades_cannot_take_an_uneven_split(self):
+        # A short blade halfway down cuts each packet wherever it happens to
+        # land, so one side often gets most of it, and its lane is only half a
+        # channel wide.  The lanes would need a fan hinged ~80 mm up to fit.
+        two_stage = replace(P, n_channels=32, channel_w=2.6, blade_t=0.4, sub_blade_z=-80.0)
+        assert _drops(two_stage, seeds=(1,))[0].delivered < 80
+
+    def test_a_one_layer_blade_tip_is_too_floppy_for_a_tight_deck(self):
+        nearly_solid = replace(ROUND, card_t=0.66)
+        assert (_score(replace(P, tip_land=0.1), nearly_solid, drops=8).delivered_frac
+                < _score(P, nearly_solid, drops=8).delivered_frac)
+
+
 class TestKnownLimits:
     """Faults that are still there.  These tests document them; they do not excuse them."""
 
@@ -801,3 +840,10 @@ class TestKnownLimits:
 
     def test_square_edged_cards_perch_in_a_fair_share_of_drops(self):
         assert _score(P, FLAT, drops=8).jam_drops.get(PERCHED, 0) >= 2
+
+    def test_perching_fades_as_the_bottom_edge_gets_rounder(self):
+        # A sleeve's folded edge is about fully round (radius = half the
+        # thickness) and never perches.  The machine cannot fix a square edge.
+        square = _score(P, replace(FLAT, blade_steps=False), drops=16)
+        rounded = _score(P, replace(FLAT, blade_steps=False, edge_radius=0.2), drops=16)
+        assert rounded.clean > square.clean

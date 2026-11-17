@@ -197,6 +197,7 @@ class Conditions:
 
     card_bottom: str = "round"     # "round": sleeve bottom modelled as a rounded edge (realistic)
                                    # "flat":  a square-cut rigid plate (pessimistic: perches on tips)
+    edge_radius: float = 0.0       # with card_bottom="flat": radius on the two bottom corners, mm
     card_t: float = CARD_T
     mu_card: float = 0.22          # card on card
     mu_machine: float = 0.35       # card on printed plastic
@@ -219,6 +220,13 @@ def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditio
         geoms = (f'<geom class="card" type="box" pos="0 0 {r / 2}" size="{hx} {hy} {hz - r / 2}" mass="{CARD_MASS}"/>'
                  f'<geom class="card" type="capsule" fromto="{-hx + r} 0 {-hz + r} {hx - r} 0 {-hz + r}" '
                  f'size="{r}" mass="1e-6"/>')
+    elif c.edge_radius > 0:
+        # square-cut card whose two bottom corners are rounded to a given radius
+        r = min(c.edge_radius * MM, hy * 0.999)
+        geoms = (f'<geom class="card" type="box" pos="0 0 {r / 2}" size="{hx} {hy} {hz - r / 2}" mass="{CARD_MASS}"/>'
+                 f'<geom class="card" type="box" pos="0 0 {-hz + r / 2}" size="{hx} {hy - r} {r / 2}" mass="1e-6"/>'
+                 + "".join(f'<geom class="card" type="capsule" fromto="{-hx + r} {s * (hy - r)} {-hz + r} '
+                           f'{hx - r} {s * (hy - r)} {-hz + r}" size="{r}" mass="1e-6"/>' for s in (-1, 1)))
     else:
         geoms = f'<geom class="card" type="box" size="{hx} {hy} {hz}" mass="{CARD_MASS}"/>'
     cards = "\n".join(f'<body name="c{k}"><freejoint/>{geoms}</body>' for k in range(n_cards))

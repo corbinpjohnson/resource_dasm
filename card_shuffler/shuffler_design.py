@@ -71,6 +71,9 @@ class Params:
     layer_h: float = 0.1          # layer height the comb slices are printed at.  The blade thickens
                                   # by this much at each step, and each step is a small ledge on
                                   # the wall cards slide down: at 0.2 mm they catch tight packets
+    sub_blade_z: float = 0.0      # if set (negative), every second blade is short: its tip is at
+                                  # this height, well down the comb where the fan has opened the
+                                  # channels up, and it splits each packet a second time
     centre_drop: float = 0.0      # the second of the two middle blades starts this much lower,
                                   # so the first cut is made by one blade, not two back to back
     roof_deg: float = 12.0        # (rake_deg = 0 only) blade top slopes away from a central peak
@@ -255,7 +258,15 @@ class Params:
             return -self.tip_guard - self.chevron_step * abs(self.slice_plane(i)[0])
         if i == mid - 1 and self.centre_drop > 0:
             return -self.tip_guard - self.centre_drop
+        if self.sub_blade_z < 0:
+            if self.is_sub(i):
+                return self.sub_blade_z
+            return -self.tip_guard - self.chevron_step * math.ceil(abs(i - mid) / 2)
         return -self.tip_guard - self.chevron_step * abs(i - mid)
+
+    def is_sub(self, i: int) -> bool:
+        """True if blade i is one of the short second-stage blades."""
+        return self.sub_blade_z < 0 and self.slice_plane(i)[0] % 2 == 1
 
     # ================= derived: outline in x ============================
     @property
@@ -299,7 +310,7 @@ class Params:
     @property
     def collar_h(self) -> float:
         """Deep enough that every blade edge ends inside the collar."""
-        deepest = -min(self.tip_z(i) for i in range(self.n_channels))
+        deepest = -min(self.tip_z(i) for i in range(self.n_channels) if not self.is_sub(i))
         return deepest + self.top_drop + 6.0
 
     # ================= derived: heights =================================

@@ -81,50 +81,69 @@ Unless stated, results are for rounded edges and flexible tips, 32 drops each.
 
 ![physics](physics.png)
 
-Blades modelled as printed, thickening in 0.1 mm steps:
+Blades modelled as printed, thickening in 0.1 mm steps, with flexible tips:
 
 | Condition | Clean drops | Cards delivered | What went wrong |
 |---|---|---|---|
 | 100 cards | 32 of 32 | 100% | |
-| Dropped from the top of the hopper (90 mm) | 32 of 32 | 100% | |
-| Tight deck, 10% air | 32 of 32 | 100% | |
-| Grippy cards (friction 0.35 / 0.50) | 30 of 32 | 99.9% | one card left, twice |
-| Tight deck, 6% air | 8 of 32 | 89.9% | packets wedge part way down the comb |
-| 100 cards, square edges | 9 of 32 | 98.9% | cards perched on or lying across blade tips |
-
-Blades modelled as a smooth taper (quicker to simulate, slightly optimistic
-for tight decks and grippy cards):
-
-| Condition | Clean drops | Cards delivered | What went wrong |
-|---|---|---|---|
 | 90 cards | 32 of 32 | 100% | |
-| 60 cards | 31 of 32 | 99.9% | one card perched once |
+| 60 cards | 32 of 32 | 100% | |
 | Dropped from 30 mm | 32 of 32 | 100% | |
 | Dropped from 50 mm | 32 of 32 | 100% | |
+| Dropped from the top of the hopper (90 mm) | 32 of 32 | 100% | |
 | Deck leaning 4 degrees in the hopper | 32 of 32 | 100% | |
-| Table 3 degrees off level, forwards | 32 of 32 | 100% | |
-| Table 3 degrees off level, backwards | 30 of 32 | 99.9% | a stray card in 2 drops |
+| Table 3 degrees off level, either way | 32 of 32 each | 100% | |
 | Slippery cards (friction 0.12 / 0.20) | 32 of 32 | 100% | |
+| Grippy cards (friction 0.35 / 0.50) | 30 of 32 | 99.9% | one card left, twice |
 | Tight deck, 12% air | 32 of 32 | 100% | |
-| Rigid blade tips, 10% air | 1 of 32 | 67% | comb jams in 29 drops |
+| Tight deck, 10% air | 32 of 32 | 100% | |
+| Tight deck, 6% air | 8 of 32 | 89.9% | packets of eight wedge part way down |
+| Square-edged cards | 9 of 32 | 98.9% | a card perched on a blade tip |
+
+Square-edged cards with rounded bottom corners (smooth-taper blade model):
+
+| Corner radius | Clean drops |
+|---|---|
+| 0 (square) | 12 of 32 |
+| 0.05 mm | 9 of 32 |
+| 0.10 mm | 11 of 32 |
+| 0.15 mm | 20 of 32 |
+| 0.20 mm | 24 of 32 |
+| 0.30 mm (fully round, as a folded sleeve) | 32 of 32 |
 
 No condition here stops the whole deck.
 
 ## Known limits
 
-- **A nearly solid deck loses cards.** With flexible tips, decks down to a
-  tenth air deliver 100%. One squeezed to 6% air delivers 90%: a packet of
-  eight such cards is 5.3 mm thick and wedges about 40 mm down a channel that
-  is 5.2 mm wide there. A stronger fan (300 mm hinge) raised that to 97% in an
-  earlier test but cost clean drops at nominal, so it is not the default.
-- **Square-edged cards perch.** With square rigid edges, a card comes to rest
-  on a blade tip, or falls over and lies across several, in over half of
-  drops. With rounded edges it is rare.
+These are the two conditions under which the simulated machine still leaves
+cards behind. Neither has a design fix that does not make the common case
+worse; both are about the cards, and both need a real deck to settle.
+
+- **Nearly solid decks.** Decks with a tenth of their thickness as air are
+  clean in 32 drops of 32. Squeezed to 6% air, a packet of eight cards is
+  5.3 mm thick, the channel is 4.8 mm at the tip and widens only slowly, so
+  about one card in ten is left behind. Wider blade spacing (`channel_w=4.5`)
+  raises that to 97% but costs clean drops for 10%-air and nominal decks; a
+  stronger fan does the same. A deck squeezed between finger and thumb can be
+  this tight; a deck held by its edges should not be. If your deck is known to
+  be very tight, build with `channel_w=4.5`.
+- **Square-edged cards.** A card with a square, rigid bottom edge can stand on
+  a blade tip with its top leaning on the hopper, in about two drops of three.
+  It is in plain view and is a single card. The sweep above shows it fading
+  as the edge rounds; a sleeve's folded bottom edge is about fully round, so
+  this should not occur with sleeved cards, but only a real deck can confirm
+  it. Thinner blade tips did not help.
+- **Drop count.** About 15 drops for casual play and two dozen for a thorough
+  shuffle of 100 cards. That is set by the seven-card packets; smaller
+  packets brought the jams back, and restacking habits (turning the deck round,
+  either pile on top, cutting) make no difference. More than two output piles
+  would halve it, but that is a different machine.
 - **Piles are untidy.** The bins are much deeper than a 50-card pile, so the
   cards lean. They come out in order, but need squaring up.
 - **Simulation limits.** Cards are rigid and friction is guessed. Blade-tip
   flexibility is modelled as a sprung hinge, which captures bending but not
-  buckling or creasing.
+  buckling or creasing. The next step is a printed prototype, not more
+  simulation.
 
 ### If cards are left behind
 
@@ -214,7 +233,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 122 checks, about 35 minutes on 4 cores
+pytest test_shuffler.py           # 126 checks, about 40 minutes on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
@@ -235,5 +254,6 @@ Each of these was simulated and made things worse or no better: raked
 blades starting lower, lane walls reaching into the bins at two heights, a
 hopper flared below the ring, a ring raised above the deck, a hopper that
 leans on its own, a single leading centre blade, wider blade spacing,
-thinner lower blades, a forward-shifted hopper, a finer comb, and blades on
-the outer side of their channels.
+thinner lower blades, a forward-shifted hopper, a finer comb, blades on the
+outer side of their channels, a second row of short blades halfway down, and
+one-layer (0.1 mm) blade tips.
