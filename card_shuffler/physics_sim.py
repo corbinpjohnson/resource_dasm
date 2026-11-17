@@ -46,6 +46,20 @@ def _bin_box(p: Params, side: str, s0, s1, n0, n1, w0, w1) -> str:
             f'size="{(s1 - s0) / 2 * MM} {(w1 - w0) / 2 * MM} {(n1 - n0) / 2 * MM}"/>')
 
 
+def _bin_hull(p: Params, meshes: "_Meshes", side: str, s0, s1, n0, n1, w0, w1) -> str:
+    """Like _bin_box, but the floor also falls towards the back by bin_cant_deg."""
+    if p.bin_cant_deg <= 0:
+        return _bin_box(p, side, s0, s1, n0, n1, w0, w1)
+    k = math.tan(math.radians(p.bin_cant_deg))
+    pts = []
+    for s in (s0, s1):
+        for n in (n0, n1):
+            for w in (w0, w1):
+                x, z = p.bin_pt(s, n - (w1 - w) * k, side)
+                pts.append((x, w, z))
+    return meshes.hull(pts)
+
+
 class _Meshes:
     def __init__(self):
         self.assets: list[str] = []
@@ -185,9 +199,9 @@ def machine_xml(p: Params, meshes: _Meshes, blade_E: float = 0.0, steps: bool = 
         out.append(_placed(p, g, sign * (p.n_channels - mid)))
     half = p.depth * p.spread(p.z_base) / 2 + 5
     for side in "LR":
-        out.append(_bin_box(p, side, p.floor_t * p.tan_ramp, end, -p.floor_t, 0, c - half, c + half))
-        out.append(_bin_box(p, side, p.bin_len, end, 0, p.stop_h, c - half, c + half))
-        out.append(_bin_box(p, side, p.bin_len, p.bin_len + p.fence_t, 0, p.fence_h, c - half, c + half))
+        out.append(_bin_hull(p, meshes, side, p.floor_t * p.tan_ramp, end, -p.floor_t, 0, c - half, c + half))
+        out.append(_bin_hull(p, meshes, side, p.bin_len, end, 0, p.stop_h, c - half, c + half))
+        out.append(_bin_hull(p, meshes, side, p.bin_len, p.bin_len + p.fence_t, 0, p.fence_h, c - half, c + half))
     return out
 
 
@@ -244,7 +258,7 @@ def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditio
   </default>
   <asset>{''.join(meshes.assets)}</asset>
   <worldbody>
-    <geom type="plane" pos="0 0 {p.z_base * MM}" size="1 1 0.01"/>
+    <geom type="plane" pos="0 0 {(p.z_base - p.depth_at_base * math.tan(math.radians(p.bin_cant_deg))) * MM}" size="1 1 0.01"/>
     {''.join(static)}
     {cards}
   </worldbody>
@@ -348,7 +362,8 @@ class Rig:
         res.settle_time = d.time
         pos = d.qpos[self.q0:].reshape(self.n, 7)[:, :3] / MM
         res.final_pos = pos.copy()
-        floor_z = min(z for _, z in p.bin_floor_outline()) - 2
+        floor_z = (min(z for _, z in p.bin_floor_outline()) - 2
+                   - p.depth_at_base * math.tan(math.radians(p.bin_cant_deg)))
         in_collar: list[int] = []
         a = math.radians(p.ramp_deg)
         ox, oz = p.bin_origin

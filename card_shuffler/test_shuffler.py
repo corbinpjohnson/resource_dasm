@@ -13,7 +13,7 @@ Read top to bottom, these follow a deck through the machine:
     9. every fault the physics engine found on the way here, reproduced on
        purpose, so the reason for each design decision stays on record
 
-Run with:  pytest test_shuffler.py                   (about 40 minutes on 4 cores)
+Run with:  pytest test_shuffler.py                   (about 45 minutes on 4 cores)
            pytest test_shuffler.py -k "not Physics and not Limits"   (15 seconds: geometry and statistics only)
 """
 
@@ -815,6 +815,38 @@ class TestBladesAsPrinted:
         assert coarse.delivered_frac < fine.delivered_frac - 0.04
 
 
+class TestItSurvivesUse:
+    """Loads on the machine and on the cards during the harshest drops."""
+
+    def _peak(self, conditions, seeds=(1, 2)):
+        import mujoco
+        import numpy as np
+        rig = physics_sim.Rig(P, conditions=conditions)
+        bend, speed = 0.0, 0.0
+        for s in seeds:
+            rig.drop(list(range(rig.n)), random.Random(s), max_time=0.0)
+            while rig.data.time < 0.8:
+                mujoco.mj_step(rig.model, rig.data, 10)
+                bend = max(bend, float(np.abs(rig.data.qpos[:rig.q0]).max()))
+                v = rig.data.qvel[rig.v0:].reshape(rig.n, 6)[:, :3]
+                speed = max(speed, float(np.linalg.norm(v, axis=1).max()))
+        return bend, speed
+
+    def test_blade_films_bend_far_below_what_petg_can_take(self):
+        # Root bending stress of the flexible part of a blade, modelled as a
+        # cantilever film.  PETG yields at about 50 MPa.
+        flex_len = (P.bevel_h / round((P.blade_t - P.tip_land) / P.layer_h)) * round(P.tip_land / P.layer_h)
+        for conditions in (replace(ROUND, release_height=90.0), replace(ROUND, card_t=0.66)):
+            bend, _ = self._peak(conditions)
+            deflection = math.sin(bend) * flex_len
+            stress = 3 * ROUND.blade_E * P.tip_land * deflection / (2 * flex_len ** 2)
+            assert stress < 5.0
+
+    def test_cards_land_no_harder_than_a_card_dealt_onto_a_table(self):
+        _, speed = self._peak(replace(ROUND, release_height=90.0))
+        assert speed < 2.2          # m/s: a free fall of about 25 cm
+
+
 class TestTriedAndRejected:
     """Ideas that looked promising and failed in simulation."""
 
@@ -824,6 +856,17 @@ class TestTriedAndRejected:
         # channel wide.  The lanes would need a fan hinged ~80 mm up to fit.
         two_stage = replace(P, n_channels=32, channel_w=2.6, blade_t=0.4, sub_blade_z=-80.0)
         assert _drops(two_stage, seeds=(1,))[0].delivered < 80
+
+    def test_tilting_the_bin_floors_back_does_not_gather_the_cards(self):
+        # Cards land standing in their own lanes and friction holds them there.
+        import numpy as np
+
+        def spread(p):
+            rig = physics_sim.Rig(p)
+            r = rig.drop(list(range(rig.n)), random.Random(1))
+            w = np.array([r.final_pos[k][1] for k in r.left])
+            return w.max() - w.min()
+        assert spread(replace(P, bin_cant_deg=10.0)) > 0.8 * spread(P)
 
     def test_a_one_layer_blade_tip_is_too_floppy_for_a_tight_deck(self):
         nearly_solid = replace(ROUND, card_t=0.66)

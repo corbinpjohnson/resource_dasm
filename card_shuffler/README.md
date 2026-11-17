@@ -113,6 +113,16 @@ Square-edged cards with rounded bottom corners (smooth-taper blade model):
 
 No condition here stops the whole deck.
 
+### Loads
+
+- **Blades.** The flexible top of each blade bends at most 0.7 mm (a nearly
+  solid deck), a bending stress of about 0.5 MPa against roughly 50 MPa that
+  PETG can take. Dropping the deck in from the top bends them 0.15 mm. Not
+  modelled: a card corner denting the film locally.
+- **Cards.** The fastest card moves at 1.6 m/s when the deck is lowered in and
+  1.9 m/s when it is dropped from the top: the same as a card dropped onto a
+  table from 13 to 18 cm.
+
 ## Known limits
 
 These are the two conditions under which the simulated machine still leaves
@@ -138,8 +148,11 @@ worse; both are about the cards, and both need a real deck to settle.
   packets brought the jams back, and restacking habits (turning the deck round,
   either pile on top, cutting) make no difference. More than two output piles
   would halve it, but that is a different machine.
-- **Piles are untidy.** The bins are much deeper than a 50-card pile, so the
-  cards lean. They come out in order, but need squaring up.
+- **Piles are untidy.** Cards land standing in their own lanes, so a 50-card
+  pile is spread across about 100 mm of a 150 mm-deep bin instead of being a
+  35 mm stack. They come out in order, but need gathering up. Tilting the bin
+  floors 5 to 15 degrees towards the back did not gather them: friction holds
+  each card where it landed.
 - **Simulation limits.** Cards are rigid and friction is guessed. Blade-tip
   flexibility is modelled as a sprung hinge, which captures bending but not
   buckling or creasing. The next step is a printed prototype, not more
@@ -233,7 +246,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 126 checks, about 40 minutes on 4 cores
+pytest test_shuffler.py           # 129 checks, about 45 minutes on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
@@ -256,4 +269,4 @@ hopper flared below the ring, a ring raised above the deck, a hopper that
 leans on its own, a single leading centre blade, wider blade spacing,
 thinner lower blades, a forward-shifted hopper, a finer comb, blades on the
 outer side of their channels, a second row of short blades halfway down, and
-one-layer (0.1 mm) blade tips.
+one-layer (0.1 mm) blade tips, and bin floors tilted towards the back.

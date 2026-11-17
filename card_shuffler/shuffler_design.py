@@ -103,6 +103,8 @@ class Params:
     bin_gap: float = 0.5          # gap between comb and bin floor
     bin_step: float = 0.6         # bin floor is this much lower than the ramp (no lip)
     floor_t: float = 3.0
+    bin_cant_deg: float = 0.0     # bin floors also fall towards the back by this much, so the cards
+                                  # gather against the back wall instead of spreading out
     stop_h: float = 26.0          # the solid block the bin tie bar passes through
     fence_h: float = 96.0         # thin fence above it, taller than a card: a deck dropped from
                                   # the top of the hopper sends cards over anything lower
