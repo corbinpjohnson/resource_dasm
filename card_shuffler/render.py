@@ -136,7 +136,7 @@ def physics_frames(p: Params, path: str, seed: int = 1, times=(0.03, 0.10, 0.20,
     rig = Rig(p)
     rig.drop(list(range(rig.n)), random.Random(seed), max_time=0.0)     # just places the deck
     d = rig.data
-    first = rig.model.nbody - rig.n                                     # card bodies come last
+    first = int(rig.card_body[0])                                       # cards are found by name
     hx, hz = p.sleeve_w / 2, p.sleeve_h / 2
     outline = np.array([[-hx, 0, -hz], [hx, 0, -hz], [hx, 0, hz], [-hx, 0, hz], [-hx, 0, -hz]])
     c, mid = p.depth / 2, p.n_channels // 2

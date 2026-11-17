@@ -95,7 +95,7 @@ def _blade_geoms(p: Params, meshes: _Meshes, W, top, blade_E: float, steps: bool
     g: list[str] = []
     bottom = p.z_lo - p.rib_d
     wb = p.blade_t
-    full = p.bevel_h                      # depth below the top edge where the blade is full thickness
+    full = p.film_h + p.bevel_h           # depth below the top edge where the blade is full thickness
     base = max(min(z for _, z in top) - full, bottom + 1)
     g.append(_box(-p.bx, p.bx, W(0), W(wb), bottom, base))
     # The taper runs the full width of the blade, ears included, so its face is flush.
@@ -105,9 +105,15 @@ def _blade_geoms(p: Params, meshes: _Meshes, W, top, blade_E: float, steps: bool
     # its second layer) is a separate flap on a sprung hinge: a printed
     # one-layer tip is a film, not a rigid knife.
     n_terr = max(1, round((wb - p.tip_land) / p.layer_h))     # one terrace per printed layer
-    step = full / n_terr                                      # height of each terrace
-    film = max(1, round(p.tip_land / p.layer_h))              # terraces thinner than two tip thicknesses flex
-    flap_len = film * step if blade_E > 0 else 0.0
+    if p.film_h > 0:
+        # a long film of tip_land first, then one terrace per layer over bevel_h
+        bounds = [0.0] + [p.taper_depth(k) for k in range(1, n_terr + 1)]
+        film = 1
+    else:
+        step = full / n_terr                                  # height of each terrace
+        bounds = [k * step for k in range(n_terr + 1)]
+        film = max(1, round(p.tip_land / p.layer_h))          # terraces thinner than two tip thicknesses flex
+    flap_len = bounds[film] if blade_E > 0 else 0.0
     flap: list[str] = []
     for (xa, za), (xb, zb) in zip(edge, edge[1:]):
         lo_a, lo_b = max(za - full, base), max(zb - full, base)
@@ -117,8 +123,12 @@ def _blade_geoms(p: Params, meshes: _Meshes, W, top, blade_E: float, steps: bool
             # a small ledge on one face at each step.
             for k in range(n_terr):
                 t = p.tip_land + k * p.layer_h
+                if max(za, zb) - bounds[k] <= base + 0.05:
+                    break                                     # the rest of the taper is below the blade
                 pts = [(xx, W(w), max(zz - d, base)) for w in (0, t)
-                       for d in (k * step, (k + 1) * step) for xx, zz in ((xa, za), (xb, zb))]
+                       for d in (bounds[k], bounds[k + 1]) for xx, zz in ((xa, za), (xb, zb))]
+                if len({round(q[2], 3) for q in pts}) < 2:
+                    continue
                 (flap if hinged and k < film else g).append(meshes.hull(pts))
             if min(lo_a, lo_b) > base + 0.5:
                 g.append(meshes.hull([(xx, W(w), zz) for w in (0, wb)
@@ -211,6 +221,11 @@ class Conditions:
 
     card_bottom: str = "round"     # "round": sleeve bottom modelled as a rounded edge (realistic)
                                    # "flat":  a square-cut rigid plate (pessimistic: perches on tips)
+    seam_h: float = 1.5            # with card_bottom="seam": depth of the sleeve's welded seam below the card, mm
+    seam_t: float = 0.15           # and its thickness
+    seam_E: float = 0.0            # Young's modulus of the seam, MPa.  0: rigid (pessimistic).
+                                   # About 1500 for polypropylene: the seam then folds like real plastic
+    seam_mass: float = 1.3e-5      # kg
     edge_radius: float = 0.0       # with card_bottom="flat": radius on the two bottom corners, mm
     card_t: float = CARD_T
     mu_card: float = 0.22          # card on card
@@ -220,6 +235,7 @@ class Conditions:
     x_jitter: float = 0.5          # cards are not perfectly squared up, +/- this
     blade_steps: bool = True       # blades thicken in one-layer steps, as printed (False: a smooth taper)
     tilt_deg: float = 0.0          # the table is off level: tipped back by this much more than the feet give
+    taps: tuple = ()               # kicks (m/s, as x w z) from tapping the machine, used only if cards remain
     blade_E: float = 2000.0        # Young's modulus of the blades, MPa (PETG).  The one-layer blade
                                    # tips then flex as a printed film would.  0: perfectly rigid
                                    # blades, which is pessimistic for tight decks
@@ -234,6 +250,19 @@ def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditio
         geoms = (f'<geom class="card" type="box" pos="0 0 {r / 2}" size="{hx} {hy} {hz - r / 2}" mass="{CARD_MASS}"/>'
                  f'<geom class="card" type="capsule" fromto="{-hx + r} 0 {-hz + r} {hx - r} 0 {-hz + r}" '
                  f'size="{r}" mass="1e-6"/>')
+    elif c.card_bottom == "seam":
+        # a sleeve's welded bottom seam: a thin plastic flange under a square-cut card
+        f, ft = c.seam_h * MM, c.seam_t * MM / 2
+        geoms = f'<geom class="card" type="box" pos="0 0 {f / 2}" size="{hx} {hy} {hz - f / 2}" mass="{CARD_MASS}"/>'
+        flange = f'<geom class="card" type="box" pos="0 0 {-f / 2}" size="{hx} {ft} {f / 2}" mass="{c.seam_mass}"/>'
+        if c.seam_E > 0:
+            # the seam is a soft plastic flap, hinged where it leaves the card
+            inertia = 2 * (hx / MM) * c.seam_t ** 3 / 12                 # mm^4
+            k = 3 * c.seam_E * inertia / c.seam_h * 1e-3                # N.m/rad
+            geoms += (f'<body pos="0 0 {-hz + f}"><joint type="hinge" axis="1 0 0" stiffness="{k}" '
+                      f'damping="{0.05 * k}" armature="1e-9" range="-1.4 1.4" limited="true"/>{flange}</body>')
+        else:
+            geoms += flange.replace(f'pos="0 0 {-f / 2}"', f'pos="0 0 {-hz + f / 2}"')
     elif c.edge_radius > 0:
         # square-cut card whose two bottom corners are rounded to a given radius
         r = min(c.edge_radius * MM, hy * 0.999)
@@ -283,6 +312,7 @@ class DropResult:
     where: dict[int, str] = field(default_factory=dict)  # jam type for each undelivered card
     unseated: list[int] = field(default_factory=list)  # in a bin but not down against the stop
     settle_time: float = 0.0
+    taps: int = 0                                      # taps on the machine that were needed
     final_pos: np.ndarray | None = None
 
     @property
@@ -312,8 +342,24 @@ class Rig:
         self.n = n_cards or p.n_cards
         self.model = mujoco.MjModel.from_xml_string(build_xml(p, self.n, timestep, conditions))
         self.data = mujoco.MjData(self.model)
-        self.q0 = self.model.nq - 7 * self.n          # cards come after any blade-tip hinges
-        self.v0 = self.model.nv - 6 * self.n
+        # Card state, located by name: cards may carry a hinged seam of their own.
+        mod = self.model
+        self.card_body = np.array([mujoco.mj_name2id(mod, mujoco.mjtObj.mjOBJ_BODY, f"c{k}") for k in range(self.n)])
+        free = mod.body_jntadr[self.card_body]
+        self.qadr = mod.jnt_qposadr[free]
+        self.dadr = mod.jnt_dofadr[free]
+        self.q0 = int(self.qadr[0])                    # blade-tip hinges come first, before any card
+        self.v0 = int(self.dadr[0])
+        self._qidx = (self.qadr[:, None] + np.arange(3)).ravel()
+        self._vidx = (self.dadr[:, None] + np.arange(3)).ravel()
+
+    def card_pos(self) -> np.ndarray:
+        """(n, 3) card centres, metres."""
+        return self.data.qpos[self._qidx].reshape(self.n, 3)
+
+    def card_vel(self) -> np.ndarray:
+        """(n, 3) card linear velocities, m/s."""
+        return self.data.qvel[self._vidx].reshape(self.n, 3)
 
     def drop(self, deck: list[int], rng: random.Random, max_time: float = 3.0,
              offset: float | None = None) -> DropResult:
@@ -338,29 +384,45 @@ class Rig:
         quat = [math.cos(lean / 2), math.sin(lean / 2), 0, 0]           # rotation about x
         for k, card in enumerate(deck):
             w_top = top_start + k * p.card_pitch
-            q = d.qpos[self.q0 + 7 * card: self.q0 + 7 * card + 7]
+            a = self.qadr[card]
+            q = d.qpos[a: a + 7]
             q[:] = [rng.uniform(-c.x_jitter, c.x_jitter) * MM,
                     (w_top + shift / 2) * MM,
                     (z0 - (1 - math.cos(lean)) * p.sleeve_h / 2) * MM, *quat]
         for card in set(range(self.n)) - set(deck):                      # unused cards: park them far away
-            d.qpos[self.q0 + 7 * card: self.q0 + 7 * card + 3] = [0.5 + 0.01 * card, 0.5, p.z_base * MM + 0.05]
+            a = self.qadr[card]
+            d.qpos[a: a + 3] = [0.5 + 0.01 * card, 0.5, p.z_base * MM + 0.05]
         res = DropResult()
         z_gate = (p.z_hi + p.sleeve_h / 2) * MM      # card centre height as it reaches the ramps
         steps_per_check = int(0.01 / self.model.opt.timestep)
-        t_quiet = 0.0
         active = np.array(sorted(deck))
-        while d.time < max_time:
-            mj.mj_step(self.model, d, steps_per_check)
-            pos = d.qpos[self.q0:].reshape(self.n, 7)[:, :3]
-            for card in deck:
-                if card not in res.lane and pos[card, 2] < z_gate + 0.02:
-                    res.lane[card] = p.lane_of(pos[card, 1] / MM, pos[card, 2] / MM)
-            speed = np.abs(d.qvel[self.v0:].reshape(self.n, 6)[active, :3]).max()
-            t_quiet = t_quiet + 0.01 if speed < 0.01 else 0.0
-            if t_quiet > 0.15:
+
+        def settle(until):
+            t_quiet = 0.0
+            while d.time < until:
+                mj.mj_step(self.model, d, steps_per_check)
+                pos = self.card_pos()
+                for card in deck:
+                    if card not in res.lane and pos[card, 2] < z_gate + 0.02:
+                        res.lane[card] = p.lane_of(pos[card, 1] / MM, pos[card, 2] / MM)
+                speed = np.abs(self.card_vel()[active]).max()
+                t_quiet = t_quiet + 0.01 if speed < 0.01 else 0.0
+                if t_quiet > 0.15:
+                    return
+
+        settle(max_time)
+        # A tap on the machine moves it briefly; in its own frame every loose
+        # card gets the opposite kick.  Done only if a card is left in the comb.
+        for dv in c.taps:
+            pos = self.card_pos() / MM
+            if not any(abs(pos[k, 0]) <= p.bx and pos[k, 2] > p.z_lo - p.rib_d for k in deck):
                 break
+            vel_idx = self._vidx.reshape(self.n, 3)[active]
+            d.qvel[vel_idx] += np.array(dv)
+            res.taps += 1
+            settle(d.time + 1.5)
         res.settle_time = d.time
-        pos = d.qpos[self.q0:].reshape(self.n, 7)[:, :3] / MM
+        pos = self.card_pos() / MM
         res.final_pos = pos.copy()
         floor_z = (min(z for _, z in p.bin_floor_outline()) - 2
                    - p.depth_at_base * math.tan(math.radians(p.bin_cant_deg)))

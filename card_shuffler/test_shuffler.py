@@ -13,7 +13,7 @@ Read top to bottom, these follow a deck through the machine:
     9. every fault the physics engine found on the way here, reproduced on
        purpose, so the reason for each design decision stays on record
 
-Run with:  pytest test_shuffler.py                   (about 45 minutes on 4 cores)
+Run with:  pytest test_shuffler.py                   (about an hour on 4 cores)
            pytest test_shuffler.py -k "not Physics and not Limits"   (15 seconds: geometry and statistics only)
 """
 
@@ -189,6 +189,16 @@ class TestCombCannotJam:
                 widths.append(P.channel_width(i, z))
                 z -= 1.0
             assert all(b >= a - 1e-9 for a, b in zip(widths, widths[1:])), f"blade {i}"
+
+    def test_the_blade_stays_a_film_until_the_channel_can_take_a_squeezed_packet(self):
+        # Eight cards squeezed to 0.66 mm each are 5.3 mm.  Until the channel
+        # is that wide the blade is a film that can give way; below that it
+        # may thicken.  With the film stopping at 27 mm, such decks lost one
+        # card in ten (section 9).
+        squeezed_packet = 8 * 0.66
+        for i in range(P.n_channels):
+            z_film_ends = P.tip_z(i) - P.taper_depth(1)
+            assert P.channel_width(i, z_film_ends) >= squeezed_packet
 
     def test_the_narrowest_point_holds_a_packet_plus_a_card_split_by_the_tip(self):
         narrowest = min(P.channel_width(i, P.tip_z(i)) for i in range(P.n_channels))
@@ -401,9 +411,13 @@ class TestEveryPartIsPrintableAndNothingCollides:
         local = _unplace(P, parts[f"slice_{MID:02d}"], slice_steps(P, MID))
         tip = P.tip_z(MID)
         near_tip = _box(-10, 10, tip - 4, tip - 2, -1, 5)
-        low_down = _box(-10, 10, tip - P.bevel_h - 6, tip - P.bevel_h - 4, -1, 5)
+        full = P.film_h + P.bevel_h
+        # low down the ramp ribs fill the channel, so measure only within the blade's own band
+        low_down = _box(-10, 10, tip - full - 6, tip - full - 4, -1, P.blade_t - 1e-3)
         assert local.intersect(near_tip).val().BoundingBox().zlen == pytest.approx(P.tip_land, abs=0.01)
-        assert local.intersect(low_down).val().BoundingBox().zlen == pytest.approx(P.blade_t, abs=0.01)
+        assert local.intersect(low_down).val().Volume() / (20 * 2) == pytest.approx(P.blade_t, abs=0.01)
+        film_end = _box(-10, 10, tip - P.film_h + 3, tip - P.film_h + 5, -1, 5)
+        assert local.intersect(film_end).val().BoundingBox().zlen == pytest.approx(P.tip_land, abs=0.01)
 
     def test_collar_wall_is_cut_short_on_the_side_the_cards_leave_by(self, parts):
         for i in (MID, MID + 1):
@@ -581,6 +595,29 @@ class TestRepeatedDropsShuffleTheDeck:
         for habit in ("turn", "random", "cut"):
             assert kept_after(habit) == pytest.approx(plain, abs=0.03), habit
 
+    def test_more_output_piles_would_not_mix_faster(self):
+        # Packets are dealt to the piles in a fixed rotation, so extra piles
+        # add no randomness: neighbours are only separated where a blade cuts.
+        def kept_after(piles, passes=15, trials=200):
+            rng = random.Random(4)
+            total = 0.0
+            for _ in range(trials):
+                deck = list(range(N))
+                for _ in range(passes):
+                    sizes = cut_into_packets(N, MODEL, rng)
+                    start = rng.randrange(piles)
+                    out = [[] for _ in range(piles)]
+                    pos = 0
+                    for j, size in enumerate(sizes):
+                        out[(start + j) % piles].extend(deck[pos:pos + size])
+                        pos += size
+                    deck = [c for pile in out for c in pile]
+                total += sum(1 for a, b in zip(deck, deck[1:]) if abs(a - b) == 1) / (N - 1)
+            return total / trials
+        two = kept_after(2)
+        assert kept_after(3) >= two - 0.02
+        assert kept_after(4) >= two - 0.02
+
     def test_a_finer_comb_needs_fewer_drops(self):
         assert passes_needed(N, replace(MODEL, cards_per_channel=5.0)) < passes_needed(N, MODEL)
 
@@ -691,7 +728,8 @@ class TestPhysicsEngineAgrees:
 # compare rates.  Every threshold is well clear of what was measured.
 # Versions 1 to 4 were 60-card machines tested with rigid blades, so they are
 # reproduced that way.  Version 5 was the first 100-card machine.
-SHORT_BINS = dict(ramp_deg=40.0, bin_extra=5.0)
+V9_BLADES = dict(film_h=0.0, bevel_h=110.0)       # blades before the long film (version 10)
+SHORT_BINS = dict(ramp_deg=40.0, bin_extra=5.0, **V9_BLADES)
 SIXTY = replace(P, n_cards=60, n_channels=12, hopper_lean_deg=4.0, machine_tilt_deg=0.0, **SHORT_BINS)
 V5 = replace(P, hopper_lean_deg=4.0, machine_tilt_deg=0.0, **SHORT_BINS)      # 100 cards, leaning hopper, level machine
 V6 = replace(P, machine_tilt_deg=2.0, **SHORT_BINS)                           # machine leaning back, short shallow bins
@@ -751,7 +789,7 @@ class TestPhysicsExplainsTheDesign:
         assert strong.jam_drops.get(COMB, 0) >= 2
 
     def test_a_blade_that_thickens_too_quickly_narrows_its_channel_and_jams(self):
-        short_taper = replace(SIXTY, bevel_h=20.0)
+        short_taper = replace(SIXTY, film_h=0.0, bevel_h=20.0)
         z = P.tip_z(MID)
         assert short_taper.channel_width(MID, z - 20) < short_taper.channel_width(MID, z)
         assert _score(short_taper, RIGID).delivered_frac < 0.60
@@ -810,8 +848,8 @@ class TestBladesAsPrinted:
 
     def test_coarse_layer_steps_on_the_blade_faces_catch_a_tight_deck(self):
         nearly_solid = replace(ROUND, card_t=0.66)
-        coarse = _score(replace(P, layer_h=0.2), nearly_solid, drops=8)
-        fine = _score(P, nearly_solid, drops=8)
+        coarse = _score(replace(P, layer_h=0.2, **V9_BLADES), nearly_solid, drops=8)
+        fine = _score(replace(P, **V9_BLADES), nearly_solid, drops=8)
         assert coarse.delivered_frac < fine.delivered_frac - 0.04
 
 
@@ -828,14 +866,14 @@ class TestItSurvivesUse:
             while rig.data.time < 0.8:
                 mujoco.mj_step(rig.model, rig.data, 10)
                 bend = max(bend, float(np.abs(rig.data.qpos[:rig.q0]).max()))
-                v = rig.data.qvel[rig.v0:].reshape(rig.n, 6)[:, :3]
+                v = rig.card_vel()
                 speed = max(speed, float(np.linalg.norm(v, axis=1).max()))
         return bend, speed
 
     def test_blade_films_bend_far_below_what_petg_can_take(self):
         # Root bending stress of the flexible part of a blade, modelled as a
         # cantilever film.  PETG yields at about 50 MPa.
-        flex_len = (P.bevel_h / round((P.blade_t - P.tip_land) / P.layer_h)) * round(P.tip_land / P.layer_h)
+        flex_len = P.taper_depth(1)          # the one-film-thick top of the blade
         for conditions in (replace(ROUND, release_height=90.0), replace(ROUND, card_t=0.66)):
             bend, _ = self._peak(conditions)
             deflection = math.sin(bend) * flex_len
@@ -854,7 +892,7 @@ class TestTriedAndRejected:
         # A short blade halfway down cuts each packet wherever it happens to
         # land, so one side often gets most of it, and its lane is only half a
         # channel wide.  The lanes would need a fan hinged ~80 mm up to fit.
-        two_stage = replace(P, n_channels=32, channel_w=2.6, blade_t=0.4, sub_blade_z=-80.0)
+        two_stage = replace(P, n_channels=32, channel_w=2.6, blade_t=0.4, sub_blade_z=-80.0, **V9_BLADES)
         assert _drops(two_stage, seeds=(1,))[0].delivered < 80
 
     def test_tilting_the_bin_floors_back_does_not_gather_the_cards(self):
@@ -870,16 +908,65 @@ class TestTriedAndRejected:
 
     def test_a_one_layer_blade_tip_is_too_floppy_for_a_tight_deck(self):
         nearly_solid = replace(ROUND, card_t=0.66)
-        assert (_score(replace(P, tip_land=0.1), nearly_solid, drops=8).delivered_frac
-                < _score(P, nearly_solid, drops=8).delivered_frac)
+        assert (_score(replace(P, tip_land=0.1, **V9_BLADES), nearly_solid, drops=8).delivered_frac
+                < _score(replace(P, **V9_BLADES), nearly_solid, drops=8).delivered_frac)
+
+
+class TestTheLongFilm:
+    """Version 9 thickened the blades from 27 mm down.  A nearly solid deck lost a card in ten."""
+
+    def test_a_short_film_loses_cards_from_a_nearly_solid_deck_and_the_long_one_does_not(self):
+        nearly_solid = replace(ROUND, card_t=0.66)
+        short = _score(replace(P, film_h=0.0, bevel_h=110.0), nearly_solid, drops=8)
+        long = _score(P, nearly_solid, drops=8)
+        assert short.delivered_frac < 0.95
+        assert long.delivered_frac > 0.98
+
+    def test_the_long_film_works_whether_the_plastic_is_half_or_twice_as_stiff(self):
+        for stiffness in (1000.0, 4000.0):
+            s = _score(P, replace(ROUND, card_t=0.66, blade_E=stiffness), drops=8)
+            assert s.delivered_frac > 0.97
+
+    def test_too_long_a_film_is_too_floppy(self):
+        floppy = _score(replace(P, film_h=75.0, bevel_h=70.0), drops=8)
+        assert floppy.clean <= 4
+
+
+KNOCK = ((0.0, 0.0, 0.5), (0.0, 0.0, 0.5))      # lift the machine ~13 mm and let it drop, twice if needed
+
+
+class TestSleeveSeamsAndTheKnock:
+    """A sleeve is welded shut below the card.  That thin seam behaves like a square edge."""
+
+    def test_a_sleeve_seam_leaves_cards_on_the_blade_tips_whether_rigid_or_flexible(self):
+        # A 1.5 mm flap of 0.15 mm plastic is stiff on the scale of a 2 g card:
+        # modelling it as hinged polypropylene changes nothing.
+        for seam in (Conditions(card_bottom="seam"), Conditions(card_bottom="seam", seam_E=1500.0)):
+            assert _score(P, seam, drops=8).clean <= 3
+
+    def test_knocking_the_machine_once_or_twice_clears_them(self):
+        knocked = _score(P, Conditions(card_bottom="seam", taps=KNOCK))
+        assert knocked.clean >= 13
+        assert knocked.delivered_frac > 0.995
+
+    def test_the_knock_has_to_be_a_definite_one(self):
+        gentle = _score(P, Conditions(card_bottom="seam", taps=((0.0, 0.0, 0.3), (0.0, 0.0, 0.3))))
+        firm = _score(P, Conditions(card_bottom="seam", taps=KNOCK))
+        assert gentle.clean < firm.clean
+
+    def test_sideways_taps_do_not_help(self):
+        import numpy as np
+        rig = physics_sim.Rig(P, conditions=Conditions(card_bottom="seam", taps=((0.6, 0, 0), (-0.6, 0, 0))))
+        assert np.mean([rig.drop(list(range(rig.n)), random.Random(s)).delivered for s in (13, 17)]) < 99.5
 
 
 class TestKnownLimits:
     """Faults that are still there.  These tests document them; they do not excuse them."""
 
-    def test_a_deck_squeezed_nearly_solid_still_loses_a_few_cards(self):
-        nearly_solid = _score(P, replace(ROUND, card_t=0.66), drops=8)
-        assert 0.85 < nearly_solid.delivered_frac < 0.995
+    def test_a_deck_squeezed_nearly_solid_still_leaves_the_odd_card(self):
+        nearly_solid = _score(P, replace(ROUND, card_t=0.66), drops=16)
+        assert nearly_solid.delivered_frac > 0.98
+        assert nearly_solid.clean < 16
 
     def test_square_edged_cards_perch_in_a_fair_share_of_drops(self):
         assert _score(P, FLAT, drops=8).jam_drops.get(PERCHED, 0) >= 2

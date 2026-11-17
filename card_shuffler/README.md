@@ -1,16 +1,17 @@
 # Gravity comb shuffler for sleeved cards
 
 A fully 3D-printed shuffler with no motor, springs, screws or moving parts.
-Drop a 90 to 100 card sleeved deck into the top, lift two piles out of the
-bins, stack them, repeat.
+Drop a 90 to 100 card sleeved deck into the top, knock the machine once on
+the table, lift two piles out of the bins, stack them, repeat.
 
 **Status: designed and simulated, not printed.** The geometry is checked by
 the test suite and by a rigid-body physics simulation (MuJoCo). The design has
-been through nine versions, each driven by a failure in that simulation. The
-current one delivers every card in 64 of 64 simulated drops under nominal
-conditions (90 and 100 cards) and at least 98% of cards in every condition
-except a nearly solid deck. It still has known limits, listed below, and a
-simulation of rigid cards is not a print.
+been through ten versions, each driven by a failure in that simulation. The
+current one delivers at least 99.5% of cards in every condition simulated,
+and every card in 31 or 32 drops of 32 in most of them. The exception is the
+bottom edge of the cards: a sleeve's welded seam can leave a card or two
+standing on the blades, and one firm knock of the machine on the table clears
+them (see below). A simulation of rigid cards is not a print.
 
 ![section](section.png)
 ![assembly](assembly.png)
@@ -40,9 +41,10 @@ back (each is a test in section 9 of `test_shuffler.py`):
   by the thickness of all the blades while the tops stay together, and every
   channel gets wider on the way down. With parallel blades the same comb
   delivers 49% of cards.
-- **Each blade thickens slowly.** One 0.2 mm layer at the tip, 1 mm thick
-  110 mm lower. Slowly enough that no channel ever narrows: whatever the tips
-  let in can fall. Thickening over 20 mm instead delivers 28%.
+- **Each blade is a film at the top and thickens slowly.** The top 60 mm of
+  each blade is a 0.2 mm film; below that it thickens one 0.1 mm layer at a
+  time to 1 mm, 80 mm further down. No channel ever narrows on the way down,
+  so whatever the tips let in can fall. Thickening over 20 mm delivered 28%.
 - **Blade faces are flush.** The taper runs right across each blade, ears
   included. A 0.5 mm step there caught cards as they swung out sideways.
 - **Nothing leans.** Two earlier versions leaned the hopper, then the whole
@@ -50,12 +52,14 @@ back (each is a test in section 9 of `test_shuffler.py`):
   hopper tilts the cards against half the channels, and a deck dropped from
   the top then locked solid in 8 drops of 16. Once the bins were fixed (below)
   neither lean was needed.
-- **The blade tips are thin enough to give.** The top 14 mm of each blade is a
-  0.2 mm film, and it stays under 0.4 mm for 27 mm. Modelled as a rigid knife, a deck with a tenth of its
-  thickness air jams in 25 drops of 32. Modelled as the PETG film it would
-  really be, the tips give by under half a millimetre and the same deck
-  delivers 99.6%. The result is the same from a third to three times the
-  stiffness of PETG, so it is not finely tuned. Do not thicken the tips.
+- **The film gives way to a squeezed packet.** Modelled as rigid knives,
+  blades jam a deck with a tenth of its thickness air in 25 drops of 32;
+  modelled as the PETG film they would be, they give by under a millimetre and
+  the deck goes through. The film has to be long: eight cards squeezed to
+  6% air are 5.3 mm, and the channel is only that wide 45 mm down. With the
+  film ending at 27 mm such decks lost a card in ten; at 60 mm they lose one in
+  two hundred. The result holds for plastic half or twice as stiff as PETG. A
+  75 mm film is too floppy. Do not thicken the tips.
 
 - **The comb is printed in 0.1 mm layers.** A blade printed flat thickens one
   layer at a time, and every layer is a small ledge on the wall cards slide
@@ -81,7 +85,8 @@ Unless stated, results are for rounded edges and flexible tips, 32 drops each.
 
 ![physics](physics.png)
 
-Blades modelled as printed, thickening in 0.1 mm steps, with flexible tips:
+Blades modelled as printed, thickening in 0.1 mm steps, with flexible film
+tips, rounded card edges:
 
 | Condition | Clean drops | Cards delivered | What went wrong |
 |---|---|---|---|
@@ -91,33 +96,60 @@ Blades modelled as printed, thickening in 0.1 mm steps, with flexible tips:
 | Dropped from 30 mm | 32 of 32 | 100% | |
 | Dropped from 50 mm | 32 of 32 | 100% | |
 | Dropped from the top of the hopper (90 mm) | 32 of 32 | 100% | |
-| Deck leaning 4 degrees in the hopper | 32 of 32 | 100% | |
+| Deck leaning 4 degrees in the hopper | 31 of 32 | 99.7% | |
 | Table 3 degrees off level, either way | 32 of 32 each | 100% | |
 | Slippery cards (friction 0.12 / 0.20) | 32 of 32 | 100% | |
-| Grippy cards (friction 0.35 / 0.50) | 30 of 32 | 99.9% | one card left, twice |
+| Grippy cards (friction 0.35 / 0.50) | 31 of 32 | 100.0% | |
 | Tight deck, 12% air | 32 of 32 | 100% | |
-| Tight deck, 10% air | 32 of 32 | 100% | |
-| Tight deck, 6% air | 8 of 32 | 89.9% | packets of eight wedge part way down |
-| Square-edged cards | 9 of 32 | 98.9% | a card perched on a blade tip |
+| Tight deck, 10% air | 31 of 32 | 100.0% | |
+| Tight deck, 6% air | 24 of 32 | 99.5% | a card left in 8 drops |
 
-Square-edged cards with rounded bottom corners (smooth-taper blade model):
+### The bottom edge of the cards
 
-| Corner radius | Clean drops |
+How the bottom edge of a card meets a 0.2 mm blade tip turns out to matter
+more than anything else left. Four edge models, nominal conditions:
+
+| Bottom edge | Clean drops | Cards delivered |
+|---|---|---|
+| Rounded (radius half the card's thickness) | 32 of 32 | 100% |
+| Square, corners rounded 0.2 mm | 24 of 32 | 99.8% (earlier blade model) |
+| Square | 10 of 32 | 98.7% |
+| Sleeve seam: a 1.5 mm x 0.15 mm welded flange under the card | 2 of 32 | 97.3% |
+
+A sleeve is welded shut below the card, so the seam is probably the closest
+model to sleeved cards, and the worst. Modelling the seam as hinged
+polypropylene instead of rigid changes nothing: a 1.5 mm flap is stiff on the
+scale of a 2 g card. What goes wrong is always the same: the last few cards to
+leave have room to lean, and one comes to rest with its edge on a blade tip and
+its top against the hopper.
+
+**Knocking the machine clears them.** Lifting it about a centimetre and letting
+it drop on the table (a 0.5 m/s jolt), once and if needed a second time:
+
+| Condition | Without the knock | With the knock |
+|---|---|---|
+| Sleeve seam | 2 of 32, 97.3% | 29 of 32, 99.9% |
+| Sleeve seam, deck dropped from the top | 8 of 32, 98.8% | 30 of 32, 99.9% |
+| Square edges | 10 of 32, 98.7% | 27 of 32, 99.8% |
+| Tight deck, 6% air | 24 of 32, 99.5% | 29 of 32, 99.8% |
+
+A gentle knock (0.3 m/s) frees about half as many; a tap from the side does
+nothing. Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
+
+| Corner radius on a square edge | Clean drops |
 |---|---|
-| 0 (square) | 12 of 32 |
+| 0 | 12 of 32 |
 | 0.05 mm | 9 of 32 |
 | 0.10 mm | 11 of 32 |
 | 0.15 mm | 20 of 32 |
 | 0.20 mm | 24 of 32 |
-| 0.30 mm (fully round, as a folded sleeve) | 32 of 32 |
-
-No condition here stops the whole deck.
+| 0.30 mm (fully round) | 32 of 32 |
 
 ### Loads
 
-- **Blades.** The flexible top of each blade bends at most 0.7 mm (a nearly
-  solid deck), a bending stress of about 0.5 MPa against roughly 50 MPa that
-  PETG can take. Dropping the deck in from the top bends them 0.15 mm. Not
+- **Blades.** The film at the top of each blade is checked by the test suite
+  to stay under 5 MPa of bending stress in the harshest cases, against roughly
+  50 MPa that PETG can take. Not
   modelled: a card corner denting the film locally.
 - **Cards.** The fastest card moves at 1.6 m/s when the deck is lowered in and
   1.9 m/s when it is dropped from the top: the same as a card dropped onto a
@@ -125,48 +157,34 @@ No condition here stops the whole deck.
 
 ## Known limits
 
-These are the two conditions under which the simulated machine still leaves
-cards behind. Neither has a design fix that does not make the common case
-worse; both are about the cards, and both need a real deck to settle.
-
-- **Nearly solid decks.** Decks with a tenth of their thickness as air are
-  clean in 32 drops of 32. Squeezed to 6% air, a packet of eight cards is
-  5.3 mm thick, the channel is 4.8 mm at the tip and widens only slowly, so
-  about one card in ten is left behind. Wider blade spacing (`channel_w=4.5`)
-  raises that to 97% but costs clean drops for 10%-air and nominal decks; a
-  stronger fan does the same. A deck squeezed between finger and thumb can be
-  this tight; a deck held by its edges should not be. If your deck is known to
-  be very tight, build with `channel_w=4.5`.
-- **Square-edged cards.** A card with a square, rigid bottom edge can stand on
-  a blade tip with its top leaning on the hopper, in about two drops of three.
-  It is in plain view and is a single card. The sweep above shows it fading
-  as the edge rounds; a sleeve's folded bottom edge is about fully round, so
-  this should not occur with sleeved cards, but only a real deck can confirm
-  it. Thinner blade tips did not help.
+- **Sleeve seams.** Simulated with a welded seam, a card or two is left on the
+  blades in most drops, and a knock clears it in about nine drops of ten. Real
+  seams vary; only a real deck will say whether the knock is needed every time
+  or never.
 - **Drop count.** About 15 drops for casual play and two dozen for a thorough
-  shuffle of 100 cards. That is set by the seven-card packets; smaller
-  packets brought the jams back, and restacking habits (turning the deck round,
-  either pile on top, cutting) make no difference. More than two output piles
-  would halve it, but that is a different machine.
+  shuffle of 100 cards. That is set by the seven-card packets; smaller packets
+  brought the jams back. Restacking habits (turning the deck round, either pile
+  on top, cutting) make no difference, and neither would three or four output
+  piles: packets go to the piles in a fixed rotation, so extra piles add no
+  randomness.
 - **Piles are untidy.** Cards land standing in their own lanes, so a 50-card
   pile is spread across about 100 mm of a 150 mm-deep bin instead of being a
   35 mm stack. They come out in order, but need gathering up. Tilting the bin
   floors 5 to 15 degrees towards the back did not gather them: friction holds
   each card where it landed.
-- **Simulation limits.** Cards are rigid and friction is guessed. Blade-tip
+- **Simulation limits.** Cards are rigid and friction is guessed. Blade-film
   flexibility is modelled as a sprung hinge, which captures bending but not
-  buckling or creasing. The next step is a printed prototype, not more
-  simulation.
+  buckling or creasing.
 
 ### If cards are left behind
 
-1. Lift the hopper off. Cards standing in the comb can be picked out and
-   added to the deck for the next drop.
-2. A packet stuck lower down can be pushed through with the printed
+1. Knock the machine: lift it about a centimetre and let it drop on the table.
+   Do it twice if a card is still standing.
+2. Lift the hopper off. Cards standing in the comb can be picked out and added
+   to the deck for the next drop.
+3. A packet stuck lower down can be pushed through with the printed
    `jam_key`, which is thin enough for any channel and long enough to reach
    the ramps.
-3. If it happens often, the deck is being squeezed too tight: riffle it once
-   to let air in, and hold it by its edges.
 
 ## How many drops
 
@@ -212,8 +230,10 @@ supports. 40 pieces in all.
 `out/assembly.step` is the whole machine for viewing or editing in CAD.
 
 Settings: 0.4 mm nozzle, 3 perimeters. Print the comb slices at **0.1 mm
-layers** in PETG: the top of each blade is a 0.2 mm film that is meant to
-flex, and the blade thickens one layer at a time below it. Everything else can
+layers** in PETG: the top 60 mm of each blade is a 0.2 mm film that is meant
+to flex, and the blade thickens one layer at a time below it. The film is the
+first two layers on the bed: use a smooth flexible plate and let it cool before
+peeling the slice off, so the film is not creased. Everything else can
 be 0.2 mm layers in PLA.
 
 ## Assembly
@@ -234,7 +254,7 @@ be 0.2 mm layers in PLA.
 
 Hold the deck by its long edges, short edge down. Lower it through the finger
 slots until it is just above the blades and let go, or drop it in from the top
-of the hopper. Pinch each pile through the notches, put left on right, square up,
+of the hopper. Then knock the machine once on the table. Pinch each pile through the notches, put left on right, square up,
 repeat.
 
 ## Changing it
@@ -246,7 +266,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 129 checks, about 45 minutes on 4 cores
+pytest test_shuffler.py           # 138 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
@@ -257,6 +277,8 @@ pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 - **Leaning the machine:** `machine_tilt_deg` cuts the feet as wedges. Not
   needed with the current bins.
 - **Smaller decks:** set `n_cards` and `n_channels` (60 cards needs 12).
+- **Very tight decks:** `channel_w=4.5` (5.5 mm blade spacing) suits a deck
+  known to be squeezed nearly solid; it costs a little for normal decks.
 - **Larger beds:** the end walls are in three pieces each only to fit 250 mm
   beds.
 
@@ -269,4 +291,5 @@ hopper flared below the ring, a ring raised above the deck, a hopper that
 leans on its own, a single leading centre blade, wider blade spacing,
 thinner lower blades, a forward-shifted hopper, a finer comb, blades on the
 outer side of their channels, a second row of short blades halfway down, and
-one-layer (0.1 mm) blade tips, and bin floors tilted towards the back.
+one-layer (0.1 mm) blade tips, bin floors tilted towards the back, a steeper
+blade roof, a 75 mm blade film, and three or four output piles.

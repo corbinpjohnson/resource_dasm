@@ -61,8 +61,11 @@ class Params:
     channel_w: float = 4.0        # gap between blades at the rim, below the taper
     blade_t: float = 1.0          # full thickness, reached only well down the blade
     tip_land: float = 0.2         # width of the blade tip: a single layer
-    bevel_h: float = 110.0        # height over which a blade thickens from tip to full.  With
-                                  # the fan this keeps every channel widening all the way down
+    bevel_h: float = 80.0         # height over which a blade thickens from film to full thickness.
+                                  # With the fan this keeps every channel widening all the way down
+    film_h: float = 60.0          # the blade stays one film thick (tip_land) this far down before it
+                                  # starts to thicken.  The film gives way to a packet squeezed
+                                  # tighter than its channel until the fan has made room for it
     chevron_step: float = 3.5     # each blade's tip is this much lower than its inner neighbour
     blade_outside: bool = False   # True puts each blade on the outer side of its own channel with
                                   # an extra divider in the middle.  Tried, to move the layer steps
@@ -197,9 +200,16 @@ class Params:
         """Width of a channel at height z (z = 0 at the rim, negative below)."""
         return self.pitch * self.spread(z) - (self.blade_t if blade_t is None else blade_t)
 
+    def taper_depth(self, k: int) -> float:
+        """Depth below a blade's top edge where it gains its k-th extra layer (k >= 1)."""
+        n = max(1, round((self.blade_t - self.tip_land) / self.layer_h))
+        if self.film_h > 0:
+            return self.film_h + self.bevel_h * (k - 1) / max(1, n - 1)
+        return k * self.bevel_h / n
+
     def blade_thickness(self, i: int, z: float) -> float:
         """Thickness of blade i at height z: one layer at its tip, full thickness bevel_h lower."""
-        grown = min(1.0, max(0.0, (self.tip_z(i) - z) / self.bevel_h))
+        grown = min(1.0, max(0.0, (self.tip_z(i) - z - self.film_h) / self.bevel_h))
         return self.tip_land + (self.blade_t - self.tip_land) * grown
 
     def channel_width(self, i: int, z: float) -> float:
@@ -608,7 +618,7 @@ def build_slice(p: Params, i: int):
     for k in range(1, n_terr + 1):
         a = p.tip_land + (k - 1) * p.layer_h
         lam = _prism(outline, a, a + p.layer_h)
-        body = body.union(lam.cut(_prism(p.above_taper_line(i, k * p.bevel_h / n_terr), a - 1, a + 1)))
+        body = body.union(lam.cut(_prism(p.above_taper_line(i, p.taper_depth(k)), a - 1, a + 1)))
 
     # Ramp rib, a short piece of the opposite rib (spacer round the far tie
     # bar) and the collar walls, all filling the channel up to the next blade.
