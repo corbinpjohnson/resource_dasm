@@ -246,7 +246,7 @@ the cards left standing in the comb. The simulation predicts, over ten drops:
 |---|---|---|
 | about 1 | a rounded edge | rocking is rarely needed |
 | about 10 | a welded seam | rock it after every drop; with rocking the test kit left none in 32 drops |
-| about 30 | a square-cut edge | rocking is needed and may not be enough; tell me what you see |
+| about 30 | a square-cut edge | rock it after every drop; with rocking the test kit left about 0.3 cards in ten drops (31 clean drops of 32) |
 
 The test kit is also a usable shuffler for smaller decks.
 

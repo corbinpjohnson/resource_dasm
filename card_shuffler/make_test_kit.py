@@ -9,7 +9,9 @@ standing in the comb.  The simulation predicts, over ten drops:
 
     about 1 card     the bottom edges behave like a rounded edge
     about 10 cards   they behave like a welded seam (rock the machine to clear)
-    about 30 cards   they behave like a square-cut edge
+    about 30 cards   they behave like a square-cut edge (rock the machine to clear)
+
+With rocking after each drop the simulation leaves almost none in every case.
 
 Usage:  python make_test_kit.py [out_dir]          (default: out_test_kit)
 """
