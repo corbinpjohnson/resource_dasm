@@ -929,6 +929,53 @@ class TestGatheringThePiles:
         assert all(abs(pos[k, 0]) > P.bx for k in r.left + r.right), "no card pushed back into the comb"
 
 
+class TestTheSlicerPrintsTheBlades:
+    """Slices a comb slice with PrusaSlicer, if installed, and compares plastic per layer with the part."""
+
+    def _per_layer(self, gcode):
+        import re
+        layers, z, e_prev, rel = {}, None, 0.0, False
+        for line in open(gcode):
+            if line.startswith("M83"):
+                rel = True
+            if line.startswith("M82"):
+                rel = False
+            if line.startswith(";Z:"):
+                z = round(float(line[3:]), 3)
+            if line.startswith("G92") and "E" in line:
+                e_prev = float(re.search(r"E([-\d.]+)", line).group(1))
+            m = re.match(r"G1 .*E([-\d.]+)", line)
+            if m and z is not None:
+                e = float(m.group(1))
+                de = e if rel else e - e_prev
+                if not rel:
+                    e_prev = e
+                if de > 0:
+                    layers[z] = layers.get(z, 0.0) + de
+        return layers
+
+    def test_with_the_profile_the_films_and_every_blade_layer_are_printed_solid(self, tmp_path):
+        import shutil
+        import subprocess
+        from pathlib import Path
+        if not shutil.which("prusa-slicer"):
+            pytest.skip("PrusaSlicer not installed")
+        import cadquery as cq
+        here = Path(__file__).parent
+        stl, gcode = tmp_path / "slice.stl", tmp_path / "slice.gcode"
+        part = as_printed(f"slice_{MID:02d}", build_parts(P)[f"slice_{MID:02d}"], P)
+        cq.exporters.export(part, str(stl), tolerance=0.02)
+        subprocess.run(["prusa-slicer", "--load", str(here / "print" / "comb_slices_prusaslicer.ini"),
+                        "--export-gcode", "--output", str(gcode), str(stl)], check=True, capture_output=True)
+        layers = self._per_layer(gcode)
+        filament = math.pi * (1.75 / 2) ** 2
+        bb = part.val().BoundingBox()
+        for z in (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.9, 1.0):
+            hit = part.intersect(_box(bb.xmin - 1, bb.xmax + 1, bb.ymin - 1, bb.ymax + 1, z - 0.1, z))
+            section = hit.val().Volume() / 0.1
+            assert layers[z] * filament / 0.1 > 0.95 * section, f"layer at {z} mm is not solid"
+
+
 class TestTriedAndRejected:
     """Ideas that looked promising and failed in simulation."""
 

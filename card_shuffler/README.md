@@ -252,8 +252,12 @@ supports. 40 pieces in all.
 
 `out/assembly.step` is the whole machine for viewing or editing in CAD.
 
-Settings: 0.4 mm nozzle, 3 perimeters. Print the comb slices at **0.1 mm
-layers** in PETG: the top 60 mm of each blade is a 0.2 mm film that is meant
+Settings: 0.4 mm nozzle, 3 perimeters. Print the comb slices with
+`print/comb_slices_prusaslicer.ini` (0.1 mm layers, 0.1 mm first layer, and at
+least 0.6 mm of solid shell top and bottom: with PrusaSlicer's default three
+solid layers the middle of each 1 mm blade is printed as sparse infill; the
+test suite slices a comb slice to check this). Print them in PETG at **0.1 mm
+layers**: the top 60 mm of each blade is a 0.2 mm film that is meant
 to flex, and the blade thickens one layer at a time below it. The film is the
 first two layers on the bed: use a smooth flexible plate and let it cool before
 peeling the slice off, so the film is not creased. Everything else can
@@ -290,7 +294,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 144 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 145 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
