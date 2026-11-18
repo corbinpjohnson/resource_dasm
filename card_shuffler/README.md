@@ -266,7 +266,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 138 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 139 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
@@ -292,4 +292,5 @@ leans on its own, a single leading centre blade, wider blade spacing,
 thinner lower blades, a forward-shifted hopper, a finer comb, blades on the
 outer side of their channels, a second row of short blades halfway down, and
 one-layer (0.1 mm) blade tips, bin floors tilted towards the back, a steeper
-blade roof, a 75 mm blade film, and three or four output piles.
+blade roof, a 75 mm blade film, three or four output piles, and a weighted
+plate laid on top of the deck to stop the last cards leaning.

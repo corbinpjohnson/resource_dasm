@@ -235,6 +235,10 @@ class Conditions:
     x_jitter: float = 0.5          # cards are not perfectly squared up, +/- this
     blade_steps: bool = True       # blades thicken in one-layer steps, as printed (False: a smooth taper)
     tilt_deg: float = 0.0          # the table is off level: tipped back by this much more than the feet give
+    follower_mass: float = 0.0     # kg; 0: no follower plate on the deck
+    follower_x: float = 66.0       # mm across the card face
+    follower_w: float = 72.0       # mm front to back: the deck's thickness plus a little
+    follower_t: float = 8.0        # mm thick
     taps: tuple = ()               # kicks (m/s, as x w z) from tapping the machine, used only if cards remain
     blade_E: float = 2000.0        # Young's modulus of the blades, MPa (PETG).  The one-layer blade
                                    # tips then flex as a printed film would.  0: perfectly rigid
@@ -273,6 +277,11 @@ def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditio
     else:
         geoms = f'<geom class="card" type="box" size="{hx} {hy} {hz}" mass="{CARD_MASS}"/>'
     cards = "\n".join(f'<body name="c{k}"><freejoint/>{geoms}</body>' for k in range(n_cards))
+    if c.follower_mass > 0:
+        # a loose weighted plate laid on the top edges of the deck in the hopper
+        fx, fw, fh = c.follower_x / 2 * MM, c.follower_w / 2 * MM, c.follower_t / 2 * MM
+        cards += (f'\n<body name="follower"><freejoint/><geom type="box" size="{fx} {fw} {fh}" '
+                  f'mass="{c.follower_mass}" friction="0.3 0.001 0.0001" rgba="0.8 0.3 0.3 1"/></body>')
     tc = 4 * timestep
     tilt = math.radians(p.machine_tilt_deg + c.tilt_deg)     # the machine leans back: gravity is tilted in its frame
     return f"""
@@ -389,6 +398,13 @@ class Rig:
             q[:] = [rng.uniform(-c.x_jitter, c.x_jitter) * MM,
                     (w_top + shift / 2) * MM,
                     (z0 - (1 - math.cos(lean)) * p.sleeve_h / 2) * MM, *quat]
+        if c.follower_mass > 0:
+            mod = self.model
+            fb = mj.mj_name2id(mod, mj.mjtObj.mjOBJ_BODY, "follower")
+            fa = mod.jnt_qposadr[mod.body_jntadr[fb]]
+            deck_top_mid = top_start + (len(deck) - 1) * p.card_pitch / 2     # the cards' top edges are at w_top
+            d.qpos[fa: fa + 7] = [0.0, deck_top_mid * MM,
+                                 (z0 + p.sleeve_h / 2 + c.follower_t / 2 + 0.5) * MM, 1, 0, 0, 0]
         for card in set(range(self.n)) - set(deck):                      # unused cards: park them far away
             a = self.qadr[card]
             d.qpos[a: a + 3] = [0.5 + 0.01 * card, 0.5, p.z_base * MM + 0.05]

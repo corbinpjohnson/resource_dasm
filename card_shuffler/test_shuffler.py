@@ -954,6 +954,13 @@ class TestSleeveSeamsAndTheKnock:
         firm = _score(P, Conditions(card_bottom="seam", taps=KNOCK))
         assert gentle.clean < firm.clean
 
+    def test_a_weighted_plate_on_top_of_the_deck_does_not_help(self):
+        # Meant to stop the last cards leaning; it lands on the comb with them
+        # and holds them there instead.
+        import numpy as np
+        rig = physics_sim.Rig(P, conditions=Conditions(card_bottom="seam", follower_mass=0.08))
+        assert np.mean([rig.drop(list(range(rig.n)), random.Random(s)).delivered for s in (9, 13, 17)]) < 99.5
+
     def test_sideways_taps_do_not_help(self):
         import numpy as np
         rig = physics_sim.Rig(P, conditions=Conditions(card_bottom="seam", taps=((0.6, 0, 0), (-0.6, 0, 0))))
