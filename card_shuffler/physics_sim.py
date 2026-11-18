@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from shuffler_design import Params
+from shuffler_design import Params, wall_faces
 
 MM = 1e-3
 CARD_T = 0.6          # rigid thickness of one sleeved card
@@ -235,6 +235,7 @@ class Conditions:
     x_jitter: float = 0.5          # cards are not perfectly squared up, +/- this
     blade_steps: bool = True       # blades thicken in one-layer steps, as printed (False: a smooth taper)
     tilt_deg: float = 0.0          # the table is off level: tipped back by this much more than the feet give
+    fingers: bool = False          # add the gathering paddles (see Rig.gather)
     follower_mass: float = 0.0     # kg; 0: no follower plate on the deck
     follower_x: float = 66.0       # mm across the card face
     follower_w: float = 72.0       # mm front to back: the deck's thickness plus a little
@@ -277,6 +278,15 @@ def build_xml(p: Params, n_cards: int, timestep: float, c: Conditions = Conditio
     else:
         geoms = f'<geom class="card" type="box" size="{hx} {hy} {hz}" mass="{CARD_MASS}"/>'
     cards = "\n".join(f'<body name="c{k}"><freejoint/>{geoms}</body>' for k in range(n_cards))
+    if c.fingers:
+        # four paddles, two per bin, that come in through the finger notches to gather a pile
+        a = math.radians(p.ramp_deg)
+        for side in "LR":
+            axes = f"{-math.cos(a)} 0 {-math.sin(a)} 0 -1 0" if side == "L" else f"{math.cos(a)} 0 {-math.sin(a)} 0 1 0"
+            for end in ("front", "back"):
+                cards += (f'\n<body name="finger_{side}_{end}" mocap="true" pos="0 0 -1" xyaxes="{axes}">'
+                          f'<geom type="box" size="{10 * MM} {3 * MM} {18 * MM}" friction="0.5 0.001 0.0001" '
+                          f'rgba="0.9 0.6 0.5 1"/></body>')
     if c.follower_mass > 0:
         # a loose weighted plate laid on the top edges of the deck in the hopper
         fx, fw, fh = c.follower_x / 2 * MM, c.follower_w / 2 * MM, c.follower_t / 2 * MM
@@ -362,6 +372,86 @@ class Rig:
         self._qidx = (self.qadr[:, None] + np.arange(3)).ravel()
         self._vidx = (self.dadr[:, None] + np.arange(3)).ravel()
 
+    def handle(self, action, active, settle) -> None:
+        """Something a person does to the machine after a drop, in the machine's own frame.
+
+        ("drop", h_mm)            lift it h_mm and let it fall flat onto the table.  When it
+                                  stops, loose cards keep falling: each gets sqrt(2 g h) downwards.
+        ("rock", side, lift_mm)   tip it onto one edge (side +1: lift the front, -1: the back),
+                                  hold a moment, let it fall back.  While tipped, gravity leans
+                                  in the machine's frame; when it lands each card keeps the
+                                  velocity its point of the machine had, which grows with its
+                                  distance from the foot it pivots on.
+        ("tilt", axis, deg, s)    tip it slowly by deg about axis "x" (front-back) or "w"
+                                  (side to side), hold s seconds, set it back down gently.
+        (dx, dw, dz)              a raw velocity kick in m/s (kept for comparison).
+        """
+        p, d, mod = self.p, self.data, self.model
+        g0 = mod.opt.gravity.copy()
+        vel_idx = self._vidx.reshape(self.n, 3)[active]
+
+        def tilt_gravity(axis, ang):
+            """Gravity as seen from the machine after tipping it by ang (front up, or right side up)."""
+            ca, sa = math.cos(ang), math.sin(ang)
+            gx, gy, gz = g0
+            if axis == "x":                 # rotation about the across axis: front (+w) rises
+                mod.opt.gravity[:] = [gx, ca * gy + sa * gz, -sa * gy + ca * gz]
+            else:                           # rotation about the front-back axis: one side rises
+                mod.opt.gravity[:] = [ca * gx - sa * gz, gy, sa * gx + ca * gz]
+
+        if action[0] == "drop":
+            d.qvel[vel_idx] += np.array([0.0, 0.0, -math.sqrt(2 * 9.81 * action[1] * MM)])
+        elif action[0] == "rock":
+            side, lift = action[1], action[2] * MM
+            c = p.depth / 2
+            reach = wall_faces(p, p.z_base)[1] + p.foot_out          # feet run this far front and back
+            span = 2 * reach * MM
+            ang = math.asin(lift / span)
+            tilt_gravity("x", side * ang)
+            settle(d.time + 0.3)
+            mod.opt.gravity[:] = g0
+            w_pivot = (c - side * reach) * MM                         # the foot it pivots on
+            omega = math.sqrt(2 * 9.81 * lift) / span                 # rad/s as the free edge lands
+            pos = self.card_pos()[active]
+            ry = pos[:, 1] - w_pivot
+            rz = pos[:, 2] - p.z_base * MM
+            # front side coming down: rotation about x with omega_x = -side * omega
+            wx = -side * omega
+            dv = np.stack([np.zeros_like(ry), -wx * rz, wx * ry], axis=1)
+            d.qvel[vel_idx] += dv
+        elif action[0] == "tilt":
+            _, axis, deg, hold = action
+            tilt_gravity(axis, math.radians(deg))
+            settle(d.time + hold)
+            mod.opt.gravity[:] = g0
+        else:
+            d.qvel[vel_idx] += np.array(action)
+
+    def gather(self, side: str, gap: float, speed: float = 40.0) -> None:
+        """Close two fingers on the pile in one bin, through the notches, until they are `gap` mm apart.
+
+        The fingers enter at the middle of the notch, square to the bin floor,
+        and move front-to-back at `speed` mm/s; then they open again.
+        """
+        p, d, mod, mj = self.p, self.data, self.model, self.mj
+        s = p.bin_len / 2 + 2
+        n = (p.notch_floor + p.wall_h) / 2
+        x, z = p.bin_pt(s, n, side)
+        half = p.depth * p.spread(z) / 2 - 5.0
+        c = p.depth / 2
+        ids = {end: mod.body_mocapid[mj.mj_name2id(mod, mj.mjtObj.mjOBJ_BODY, f"finger_{side}_{end}")]
+               for end in ("front", "back")}
+        steps = max(1, int((half - gap / 2) / speed / 0.01))
+        for k in range(steps + 1):
+            reach = half - (half - gap / 2) * k / steps
+            d.mocap_pos[ids["front"]] = [x * MM, (c + reach) * MM, z * MM]
+            d.mocap_pos[ids["back"]] = [x * MM, (c - reach) * MM, z * MM]
+            mj.mj_step(mod, d, int(0.01 / mod.opt.timestep))
+        mj.mj_step(mod, d, int(0.3 / mod.opt.timestep))         # hold
+        for end in ids:                                           # take the fingers away
+            d.mocap_pos[ids[end]] = [0, 0, -1]
+        mj.mj_step(mod, d, int(0.5 / mod.opt.timestep))
+
     def card_pos(self) -> np.ndarray:
         """(n, 3) card centres, metres."""
         return self.data.qpos[self._qidx].reshape(self.n, 3)
@@ -429,12 +519,11 @@ class Rig:
         settle(max_time)
         # A tap on the machine moves it briefly; in its own frame every loose
         # card gets the opposite kick.  Done only if a card is left in the comb.
-        for dv in c.taps:
+        for action in c.taps:
             pos = self.card_pos() / MM
             if not any(abs(pos[k, 0]) <= p.bx and pos[k, 2] > p.z_lo - p.rib_d for k in deck):
                 break
-            vel_idx = self._vidx.reshape(self.n, 3)[active]
-            d.qvel[vel_idx] += np.array(dv)
+            self.handle(action, active, settle)
             res.taps += 1
             settle(d.time + 1.5)
         res.settle_time = d.time

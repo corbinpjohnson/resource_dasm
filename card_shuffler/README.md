@@ -1,8 +1,8 @@
 # Gravity comb shuffler for sleeved cards
 
 A fully 3D-printed shuffler with no motor, springs, screws or moving parts.
-Drop a 90 to 100 card sleeved deck into the top, knock and rock the machine
-on the table, lift two piles out of the bins, stack them, repeat.
+Drop a 90 to 100 card sleeved deck into the top, rock the machine front and
+back on the table, gather the two piles, stack them, repeat.
 
 **Status: designed and simulated, not printed.** The geometry is checked by
 the test suite and by a rigid-body physics simulation (MuJoCo). The design has
@@ -10,9 +10,9 @@ been through ten versions, each driven by a failure in that simulation. The
 current one delivers at least 99.5% of cards in every condition simulated,
 and every card in 31 or 32 drops of 32 in most of them. The exception is the
 bottom edge of the cards: a sleeve's welded seam can leave a card or two
-standing on the blades. Knocking the machine flat on the table and then
-rocking it onto its front and back edges cleared every card in 63 drops of 64
-(see below). A simulation of rigid cards is not a print.
+standing on the blades. Rocking the machine onto its front and back edges
+clears every card in 60 drops of 64 (see below). A simulation of rigid cards is
+not a print.
 
 ![section](section.png)
 ![assembly](assembly.png)
@@ -124,32 +124,33 @@ scale of a 2 g card. What goes wrong is always the same: the last few cards to
 leave have room to lean, and one comes to rest with its edge on a blade tip and
 its top against the hopper.
 
-**Knocking the machine clears them.** Lifting it about a centimetre and letting
-it drop on the table (a 0.5 m/s jolt), once and if needed a second time:
+**Rocking the machine clears them.** Lift the front about a centimetre, so it
+pivots on its back feet, and let it drop; then the same with the back. In the
+simulation this is modelled from the motion itself: while the machine is
+tipped, gravity leans in its frame; when it lands, every card keeps the
+velocity its own part of the machine had, which is largest high up and far
+from the pivot.
 
-| Condition | Without the knock | With the knock |
+| Condition | No handling | Rocked front and back (1 cm) |
 |---|---|---|
-| Sleeve seam | 2 of 32, 97.3% | 29 of 32, 99.9% |
-| Sleeve seam, deck dropped from the top | 8 of 32, 98.8% | 30 of 32, 99.9% |
-| Square edges | 10 of 32, 98.7% | 27 of 32, 99.8% |
-| Tight deck, 6% air | 24 of 32, 99.5% | 29 of 32, 99.8% |
+| Sleeve seam (64 drops) | about 1 in 16 clean | 60 of 64, 99.9% |
+| Sleeve seam, deck dropped from the top | 8 of 32, 98.8% | 31 of 32, 100.0% |
+| Sleeve seam, 90 cards | | 30 of 32, 99.9% |
+| Square edges | 10 of 32, 98.7% | 29 of 32, 99.9% |
+| Tight deck, 6% air (rounded edges) | 24 of 32, 99.5% | 26 of 32, 99.7% |
 
-A gentle knock (0.3 m/s) frees about half as many; a tap from the side does
-nothing. More straight knocks, or harder ones, do no better than two. What does
-better is varying the direction: one knock flat, one with the machine tipped
-onto its front edge, one tipped onto its back edge.
+Rocking by only 5 mm cleared 28 of 32. Other handling, simulated the same way,
+does not work:
 
-| Rocking routine (flat, front, back) | Clean drops | Cards delivered |
-|---|---|---|
-| Sleeve seam, 64 drops | 63 of 64 | 100.0% |
-| Sleeve seam, deck dropped from the top | 32 of 32 | 100% |
-| Sleeve seam, 90 cards | 31 of 32 | 100.0% |
-| Sleeve seam, 6% air | 32 of 32 | 100% |
-| Square edges | 31 of 32 | 100.0% |
-| Tight deck, 6% air (rounded edges) | 29 of 32 | 99.8% |
+| Handling of seam-edged cards | Clean drops |
+|---|---|
+| None | 1 of 16 |
+| Lift 1 cm and drop it flat, twice | 1 of 16 (the cards just keep falling onto the tips) |
+| Tip it slowly 15 or 25 degrees front and back, no landing | 7 of 16 |
+| Tip it slowly side to side | 1 of 16 |
+| Rock it front and back | 16 of 16 |
 
-A tipped knock is modelled as an upward plus a front-to-back kick; the brief
-rotation of the machine as it lands is not modelled. Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
+Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
 
 | Corner radius on a square edge | Clean drops |
 |---|---|
@@ -173,8 +174,8 @@ rotation of the machine as it lands is not modelled. Corners rounded to 0.2 mm, 
 ## Known limits
 
 - **Sleeve seams.** Simulated with a welded seam, a card or two is left on the
-  blades in most drops, and the knock-and-rock routine clears it in 63 drops
-  of 64. Real seams vary; only a real deck will say whether the routine is
+  blades in most drops, and rocking the machine front and back clears it in
+  60 drops of 64. Real seams vary; only a real deck will say whether the routine is
   needed every time or never. Design changes tried instead (steeper blade
   roof, thinner tips, a weighted plate on the deck) did not help.
 - **Drop count.** About 15 drops for casual play and two dozen for a thorough
@@ -183,20 +184,20 @@ rotation of the machine as it lands is not modelled. Corners rounded to 0.2 mm, 
   on top, cutting) make no difference, and neither would three or four output
   piles: packets go to the piles in a fixed rotation, so extra piles add no
   randomness.
-- **Piles are untidy.** Cards land standing in their own lanes, so a 50-card
-  pile is spread across about 100 mm of a 150 mm-deep bin instead of being a
-  35 mm stack. They come out in order, but need gathering up. Tilting the bin
-  floors 5 to 15 degrees towards the back did not gather them: friction holds
-  each card where it landed.
+- **Piles need gathering.** Cards land standing in their own lanes, so a
+  50-card pile is spread across about 100 mm of a 150 mm-deep bin. Pushing it
+  together with a finger through each of the two notches (front and back
+  walls) squares it to 34 to 47 mm in the simulation, with every card staying
+  in the bin and the order almost unchanged (a few neighbouring cards swap,
+  which only adds to the shuffle). Tilting the bin floors did not gather them.
 - **Simulation limits.** Cards are rigid and friction is guessed. Blade-film
   flexibility is modelled as a sprung hinge, which captures bending but not
   buckling or creasing.
 
 ### If cards are left behind
 
-1. Knock the machine: lift it about a centimetre and let it drop flat on the
-   table. Then tip it onto its front edge by about a centimetre and let it
-   drop back, and the same onto its back edge.
+1. Rock the machine: lift the front about a centimetre and let it drop, then
+   the back. Lifting it flat and dropping it does not help.
 2. Lift the hopper off. Cards standing in the comb can be picked out and added
    to the deck for the next drop.
 3. A packet stuck lower down can be pushed through with the printed
@@ -271,9 +272,9 @@ be 0.2 mm layers in PLA.
 
 Hold the deck by its long edges, short edge down. Lower it through the finger
 slots until it is just above the blades and let go, or drop it in from the top
-of the hopper. Then knock it flat on the table and rock it front and back
-(see "If cards are left behind"). Pinch each pile through the notches, put left on right, square up,
-repeat.
+of the hopper. Then rock it front and back (see "If cards are left behind").
+Push each pile together with a finger through each notch, lift it out, put
+left on right, square up, repeat.
 
 ## Changing it
 
@@ -284,7 +285,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 140 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 141 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 

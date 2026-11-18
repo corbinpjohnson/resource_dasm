@@ -885,6 +885,26 @@ class TestItSurvivesUse:
         assert speed < 2.2          # m/s: a free fall of about 25 cm
 
 
+class TestGatheringThePiles:
+    """Cards land standing in their own lanes, so each pile is spread out.  Fingers through the notches gather it."""
+
+    def test_two_fingers_through_the_notches_square_each_pile_up(self):
+        import numpy as np
+        rig = physics_sim.Rig(P, conditions=Conditions(fingers=True))
+        r = rig.drop(list(range(rig.n)), random.Random(1))
+        assert r.delivered == rig.n
+
+        def spread(pile):
+            w = rig.card_pos()[pile, 1] / 1e-3
+            return w.max() - w.min()
+        assert spread(r.left) > 80 and spread(r.right) > 80          # as they land
+        rig.gather("L", 45.0)
+        rig.gather("R", 45.0)
+        assert spread(r.left) < 50 and spread(r.right) < 50
+        pos = rig.card_pos() / 1e-3
+        assert all(abs(pos[k, 0]) > P.bx for k in r.left + r.right), "no card pushed back into the comb"
+
+
 class TestTriedAndRejected:
     """Ideas that looked promising and failed in simulation."""
 
@@ -932,11 +952,10 @@ class TestTheLongFilm:
         assert floppy.clean <= 4
 
 
-KNOCK = ((0.0, 0.0, 0.5), (0.0, 0.0, 0.5))      # lift the machine ~13 mm and let it drop, twice if needed
-ROCK = ((0.0, 0.0, 0.5), (0.0, 0.4, 0.4), (0.0, -0.4, 0.4))   # drop it flat, then onto its front, then its back
+ROCK = (("rock", 1, 10.0), ("rock", -1, 10.0))   # tip it 1 cm onto its back feet and let it drop, then the front
 
 
-class TestSleeveSeamsAndTheKnock:
+class TestSleeveSeamsAndRocking:
     """A sleeve is welded shut below the card.  That thin seam behaves like a square edge."""
 
     def test_a_sleeve_seam_leaves_cards_on_the_blade_tips_whether_rigid_or_flexible(self):
@@ -945,25 +964,28 @@ class TestSleeveSeamsAndTheKnock:
         for seam in (Conditions(card_bottom="seam"), Conditions(card_bottom="seam", seam_E=1500.0)):
             assert _score(P, seam, drops=8).clean <= 3
 
-    def test_knocking_the_machine_once_or_twice_clears_them(self):
-        knocked = _score(P, Conditions(card_bottom="seam", taps=KNOCK))
-        assert knocked.clean >= 13
-        assert knocked.delivered_frac > 0.995
-
-    def test_rocking_it_front_and_back_as_well_clears_nearly_every_card(self):
-        # Straight knocks alone, even three or harder ones, leave a card in a
-        # tenth of drops.  Adding a knock tipped forwards and one tipped back
-        # left one card in 64 drops.  (A tipped knock is modelled as an upward
-        # plus a front-back kick; the machine's brief rotation is not.)
+    def test_rocking_the_machine_front_and_back_clears_them(self):
+        # Lift the front 1 cm (it pivots on its back feet) and let it drop,
+        # then the same at the back.  While tipped gravity leans; on landing
+        # each card keeps the velocity its part of the machine had.
         rocked = _score(P, Conditions(card_bottom="seam", taps=ROCK))
-        straight = _score(P, Conditions(card_bottom="seam", taps=KNOCK + ((0.0, 0.0, 0.5),)))
         assert rocked.clean >= 15
-        assert rocked.clean >= straight.clean
+        assert rocked.delivered_frac > 0.998
 
-    def test_the_knock_has_to_be_a_definite_one(self):
-        gentle = _score(P, Conditions(card_bottom="seam", taps=((0.0, 0.0, 0.3), (0.0, 0.0, 0.3))))
-        firm = _score(P, Conditions(card_bottom="seam", taps=KNOCK))
-        assert gentle.clean < firm.clean
+    def test_dropping_it_flat_onto_the_table_does_not_help(self):
+        # When it lands the cards keep falling: a downward kick, which only
+        # presses a perched card harder onto its tip.
+        flat = _score(P, Conditions(card_bottom="seam", taps=(("drop", 10.0), ("drop", 10.0))), drops=8)
+        assert flat.clean <= 3
+
+    def test_a_slow_tilt_without_the_landing_is_not_enough(self):
+        tilted = _score(P, Conditions(card_bottom="seam", taps=(("tilt", "x", 25.0, 0.6), ("tilt", "x", -25.0, 0.6))))
+        rocked = _score(P, Conditions(card_bottom="seam", taps=ROCK))
+        assert tilted.clean < rocked.clean - 4
+
+    def test_tilting_it_side_to_side_does_nothing(self):
+        sideways = _score(P, Conditions(card_bottom="seam", taps=(("tilt", "w", 15.0, 0.6), ("tilt", "w", -15.0, 0.6))), drops=8)
+        assert sideways.clean <= 3
 
     def test_a_weighted_plate_on_top_of_the_deck_does_not_help(self):
         # Meant to stop the last cards leaning; it lands on the comb with them
@@ -971,11 +993,6 @@ class TestSleeveSeamsAndTheKnock:
         import numpy as np
         rig = physics_sim.Rig(P, conditions=Conditions(card_bottom="seam", follower_mass=0.08))
         assert np.mean([rig.drop(list(range(rig.n)), random.Random(s)).delivered for s in (9, 13, 17)]) < 99.5
-
-    def test_sideways_taps_do_not_help(self):
-        import numpy as np
-        rig = physics_sim.Rig(P, conditions=Conditions(card_bottom="seam", taps=((0.6, 0, 0), (-0.6, 0, 0))))
-        assert np.mean([rig.drop(list(range(rig.n)), random.Random(s)).delivered for s in (13, 17)]) < 99.5
 
 
 class TestKnownLimits:
