@@ -933,6 +933,7 @@ class TestTheLongFilm:
 
 
 KNOCK = ((0.0, 0.0, 0.5), (0.0, 0.0, 0.5))      # lift the machine ~13 mm and let it drop, twice if needed
+ROCK = ((0.0, 0.0, 0.5), (0.0, 0.4, 0.4), (0.0, -0.4, 0.4))   # drop it flat, then onto its front, then its back
 
 
 class TestSleeveSeamsAndTheKnock:
@@ -948,6 +949,16 @@ class TestSleeveSeamsAndTheKnock:
         knocked = _score(P, Conditions(card_bottom="seam", taps=KNOCK))
         assert knocked.clean >= 13
         assert knocked.delivered_frac > 0.995
+
+    def test_rocking_it_front_and_back_as_well_clears_nearly_every_card(self):
+        # Straight knocks alone, even three or harder ones, leave a card in a
+        # tenth of drops.  Adding a knock tipped forwards and one tipped back
+        # left one card in 64 drops.  (A tipped knock is modelled as an upward
+        # plus a front-back kick; the machine's brief rotation is not.)
+        rocked = _score(P, Conditions(card_bottom="seam", taps=ROCK))
+        straight = _score(P, Conditions(card_bottom="seam", taps=KNOCK + ((0.0, 0.0, 0.5),)))
+        assert rocked.clean >= 15
+        assert rocked.clean >= straight.clean
 
     def test_the_knock_has_to_be_a_definite_one(self):
         gentle = _score(P, Conditions(card_bottom="seam", taps=((0.0, 0.0, 0.3), (0.0, 0.0, 0.3))))

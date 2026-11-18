@@ -1,8 +1,8 @@
 # Gravity comb shuffler for sleeved cards
 
 A fully 3D-printed shuffler with no motor, springs, screws or moving parts.
-Drop a 90 to 100 card sleeved deck into the top, knock the machine once on
-the table, lift two piles out of the bins, stack them, repeat.
+Drop a 90 to 100 card sleeved deck into the top, knock and rock the machine
+on the table, lift two piles out of the bins, stack them, repeat.
 
 **Status: designed and simulated, not printed.** The geometry is checked by
 the test suite and by a rigid-body physics simulation (MuJoCo). The design has
@@ -10,8 +10,9 @@ been through ten versions, each driven by a failure in that simulation. The
 current one delivers at least 99.5% of cards in every condition simulated,
 and every card in 31 or 32 drops of 32 in most of them. The exception is the
 bottom edge of the cards: a sleeve's welded seam can leave a card or two
-standing on the blades, and one firm knock of the machine on the table clears
-them (see below). A simulation of rigid cards is not a print.
+standing on the blades. Knocking the machine flat on the table and then
+rocking it onto its front and back edges cleared every card in 63 drops of 64
+(see below). A simulation of rigid cards is not a print.
 
 ![section](section.png)
 ![assembly](assembly.png)
@@ -134,7 +135,21 @@ it drop on the table (a 0.5 m/s jolt), once and if needed a second time:
 | Tight deck, 6% air | 24 of 32, 99.5% | 29 of 32, 99.8% |
 
 A gentle knock (0.3 m/s) frees about half as many; a tap from the side does
-nothing. Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
+nothing. More straight knocks, or harder ones, do no better than two. What does
+better is varying the direction: one knock flat, one with the machine tipped
+onto its front edge, one tipped onto its back edge.
+
+| Rocking routine (flat, front, back) | Clean drops | Cards delivered |
+|---|---|---|
+| Sleeve seam, 64 drops | 63 of 64 | 100.0% |
+| Sleeve seam, deck dropped from the top | 32 of 32 | 100% |
+| Sleeve seam, 90 cards | 31 of 32 | 100.0% |
+| Sleeve seam, 6% air | 32 of 32 | 100% |
+| Square edges | 31 of 32 | 100.0% |
+| Tight deck, 6% air (rounded edges) | 29 of 32 | 99.8% |
+
+A tipped knock is modelled as an upward plus a front-to-back kick; the brief
+rotation of the machine as it lands is not modelled. Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
 
 | Corner radius on a square edge | Clean drops |
 |---|---|
@@ -158,9 +173,10 @@ nothing. Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
 ## Known limits
 
 - **Sleeve seams.** Simulated with a welded seam, a card or two is left on the
-  blades in most drops, and a knock clears it in about nine drops of ten. Real
-  seams vary; only a real deck will say whether the knock is needed every time
-  or never.
+  blades in most drops, and the knock-and-rock routine clears it in 63 drops
+  of 64. Real seams vary; only a real deck will say whether the routine is
+  needed every time or never. Design changes tried instead (steeper blade
+  roof, thinner tips, a weighted plate on the deck) did not help.
 - **Drop count.** About 15 drops for casual play and two dozen for a thorough
   shuffle of 100 cards. That is set by the seven-card packets; smaller packets
   brought the jams back. Restacking habits (turning the deck round, either pile
@@ -178,8 +194,9 @@ nothing. Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
 
 ### If cards are left behind
 
-1. Knock the machine: lift it about a centimetre and let it drop on the table.
-   Do it twice if a card is still standing.
+1. Knock the machine: lift it about a centimetre and let it drop flat on the
+   table. Then tip it onto its front edge by about a centimetre and let it
+   drop back, and the same onto its back edge.
 2. Lift the hopper off. Cards standing in the comb can be picked out and added
    to the deck for the next drop.
 3. A packet stuck lower down can be pushed through with the printed
@@ -254,7 +271,8 @@ be 0.2 mm layers in PLA.
 
 Hold the deck by its long edges, short edge down. Lower it through the finger
 slots until it is just above the blades and let go, or drop it in from the top
-of the hopper. Then knock the machine once on the table. Pinch each pile through the notches, put left on right, square up,
+of the hopper. Then knock it flat on the table and rock it front and back
+(see "If cards are left behind"). Pinch each pile through the notches, put left on right, square up,
 repeat.
 
 ## Changing it
@@ -266,7 +284,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 139 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 140 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
