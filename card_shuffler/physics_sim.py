@@ -240,6 +240,7 @@ class Conditions:
     follower_x: float = 66.0       # mm across the card face
     follower_w: float = 72.0       # mm front to back: the deck's thickness plus a little
     follower_t: float = 8.0        # mm thick
+    impact_ms: float = 0.0         # how long the machine takes to stop when it lands (0: instantly)
     taps: tuple = ()               # kicks (m/s, as x w z) from tapping the machine, used only if cards remain
     blade_E: float = 2000.0        # Young's modulus of the blades, MPa (PETG).  The one-layer blade
                                    # tips then flex as a printed film would.  0: perfectly rigid
@@ -400,7 +401,7 @@ class Rig:
                 mod.opt.gravity[:] = [ca * gx - sa * gz, gy, sa * gx + ca * gz]
 
         if action[0] == "drop":
-            d.qvel[vel_idx] += np.array([0.0, 0.0, -math.sqrt(2 * 9.81 * action[1] * MM)])
+            self._apply_impact(vel_idx, np.array([0.0, 0.0, -math.sqrt(2 * 9.81 * action[1] * MM)]))
         elif action[0] == "rock":
             side, lift = action[1], action[2] * MM
             c = p.depth / 2
@@ -418,7 +419,7 @@ class Rig:
             # front side coming down: rotation about x with omega_x = -side * omega
             wx = -side * omega
             dv = np.stack([np.zeros_like(ry), -wx * rz, wx * ry], axis=1)
-            d.qvel[vel_idx] += dv
+            self._apply_impact(vel_idx, dv)
         elif action[0] == "tilt":
             _, axis, deg, hold = action
             tilt_gravity(axis, math.radians(deg))
@@ -451,6 +452,23 @@ class Rig:
         for end in ids:                                           # take the fingers away
             d.mocap_pos[ids[end]] = [0, 0, -1]
         mj.mj_step(mod, d, int(0.5 / mod.opt.timestep))
+
+    def _apply_impact(self, vel_idx, dv) -> None:
+        """Give loose cards the velocity change of the machine stopping on the table.
+
+        impact_ms = 0: the machine stops instantly.  Otherwise the stop takes
+        that long (a softer table): seen from the machine, the cards feel a
+        constant extra acceleration dv / impact time for that long.
+        """
+        ms = self.c.impact_ms
+        if ms <= 0:
+            self.data.qvel[vel_idx] += dv
+            return
+        dt = self.model.opt.timestep
+        n = max(1, int(ms * 1e-3 / dt))
+        for _ in range(n):
+            self.data.qvel[vel_idx] += dv / n
+            self.mj.mj_step(self.model, self.data)
 
     def card_pos(self) -> np.ndarray:
         """(n, 3) card centres, metres."""

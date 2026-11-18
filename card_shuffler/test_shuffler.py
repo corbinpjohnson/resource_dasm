@@ -618,6 +618,30 @@ class TestRepeatedDropsShuffleTheDeck:
         assert kept_after(3) >= two - 0.02
         assert kept_after(4) >= two - 0.02
 
+    def test_a_drop_is_worth_about_a_quarter_of_a_hand_riffle(self):
+        # A riffle (Gilbert-Shannon-Reeds model) separates neighbours at about
+        # every other card; a drop only where a blade cuts, every seventh.
+        def riffle(deck, rng):
+            cut = sum(rng.random() < 0.5 for _ in deck)
+            a, b, out = deck[:cut], deck[cut:], []
+            while a or b:
+                out.append(a.pop(0) if rng.random() < len(a) / (len(a) + len(b)) else b.pop(0))
+            return out
+
+        def riffles_needed():
+            for k in range(1, 20):
+                rng = random.Random(3)
+                kept = 0.0
+                for _ in range(150):
+                    d = list(range(N))
+                    for _ in range(k):
+                        d = riffle(d, rng)
+                    kept += neighbours_kept(d)
+                if kept / 150 <= 2 / N:
+                    return k
+        ratio = passes_needed(N, MODEL) / riffles_needed()
+        assert 3 <= ratio <= 5
+
     def test_a_finer_comb_needs_fewer_drops(self):
         assert passes_needed(N, replace(MODEL, cards_per_channel=5.0)) < passes_needed(N, MODEL)
 
@@ -971,6 +995,12 @@ class TestSleeveSeamsAndRocking:
         rocked = _score(P, Conditions(card_bottom="seam", taps=ROCK))
         assert rocked.clean >= 15
         assert rocked.delivered_frac > 0.998
+
+    def test_rocking_still_works_when_the_landing_is_soft(self):
+        # The impact spread over 30 ms instead of instant, as on a soft table.
+        soft = _score(P, Conditions(card_bottom="seam", taps=ROCK, impact_ms=30.0))
+        assert soft.clean >= 11
+        assert soft.delivered_frac > 0.995
 
     def test_dropping_it_flat_onto_the_table_does_not_help(self):
         # When it lands the cards keep falling: a downward kick, which only

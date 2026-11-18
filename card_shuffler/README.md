@@ -139,7 +139,8 @@ from the pivot.
 | Square edges | 10 of 32, 98.7% | 29 of 32, 99.9% |
 | Tight deck, 6% air (rounded edges) | 24 of 32, 99.5% | 26 of 32, 99.7% |
 
-Rocking by only 5 mm cleared 28 of 32. Other handling, simulated the same way,
+Rocking by only 5 mm cleared 28 of 32. On a soft table, where the machine takes
+15 or 30 ms to stop instead of stopping at once, it cleared 29 and 26 of 32. Other handling, simulated the same way,
 does not work:
 
 | Handling of seam-edged cards | Clean drops |
@@ -179,7 +180,10 @@ Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
   needed every time or never. Design changes tried instead (steeper blade
   roof, thinner tips, a weighted plate on the deck) did not help.
 - **Drop count.** About 15 drops for casual play and two dozen for a thorough
-  shuffle of 100 cards. That is set by the seven-card packets; smaller packets
+  shuffle of 100 cards. By the same measure, hand riffles of a 100-card deck
+  need about 6: a drop is worth about a quarter of a riffle, because a riffle
+  separates neighbouring cards at about every other card and a drop only where
+  a blade cuts. That is set by the seven-card packets; smaller packets
   brought the jams back. Restacking habits (turning the deck round, either pile
   on top, cutting) make no difference, and neither would three or four output
   piles: packets go to the piles in a fixed rotation, so extra piles add no
@@ -285,7 +289,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 141 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 143 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
