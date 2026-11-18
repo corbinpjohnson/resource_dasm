@@ -232,6 +232,24 @@ five-card packets) but is less tolerant of tight decks. The model is
 `shuffle_sim.py`, calibrated against consecutive simulated drops of the
 60-card version.
 
+## Test before you build
+
+The one thing the simulation cannot tell you is how the bottom edges of your
+sleeves behave on a 0.2 mm blade tip. `python make_test_kit.py` exports a
+30-card, 6-channel version to `out_test_kit/`: the same blades, film, fan,
+ramps, bins and hopper, in 28 pieces and about half the plastic.
+
+Drop 30 of your sleeved cards through it ten times, without rocking, and count
+the cards left standing in the comb. The simulation predicts, over ten drops:
+
+| Cards left standing | Your sleeves behave like | What it means for the full machine |
+|---|---|---|
+| about 1 | a rounded edge | rocking is rarely needed |
+| about 10 | a welded seam | rock it after every drop; with rocking the test kit left none in 32 drops |
+| about 30 | a square-cut edge | rocking is needed and may not be enough; tell me what you see |
+
+The test kit is also a usable shuffler for smaller decks.
+
 ## Size and printing
 
 Assembled: 361 wide x 158 deep x 369 tall mm (277 without the hopper). Needs a
@@ -292,9 +310,10 @@ All dimensions are fields of `Params` in `shuffler_design.py`.
 ```
 pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
+python make_test_kit.py           # the 30-card test version, to out_test_kit/
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 145 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 147 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 

@@ -27,7 +27,7 @@ import pytest
 from shuffle_sim import (CombModel, cut_into_packets, mean_neighbours_kept,
                          neighbours_kept, one_pass, passes_needed,
                          position_bias, restack, shuffle)
-from shuffler_design import (BAR_KINDS, PRINT_ROTATION, Params, _box, _unplace,
+from shuffler_design import (BAR_KINDS, CANONICAL, PRINT_ROTATION, Params, _box, _unplace,
                              as_printed, bar_length, bar_positions,
                              build_jam_key, build_parts, print_list,
                              resting_pile, slice_steps, wall_faces)
@@ -974,6 +974,27 @@ class TestTheSlicerPrintsTheBlades:
             hit = part.intersect(_box(bb.xmin - 1, bb.xmax + 1, bb.ymin - 1, bb.ymax + 1, z - 0.1, z))
             section = hit.val().Volume() / 0.1
             assert layers[z] * filament / 0.1 > 0.95 * section, f"layer at {z} mm is not solid"
+
+
+class TestTheTestKit:
+    """A 30-card, 6-channel version to try your own sleeves on before printing the whole machine."""
+
+    def test_it_builds_and_needs_about_half_the_plastic(self):
+        from make_test_kit import KIT
+        kit = build_parts(KIT)
+        assert all(s.val().isValid() and len(s.solids().vals()) == 1 for s in kit.values())
+        def volume(p, parts):
+            return sum(parts[CANONICAL.get(f, f)].val().Volume() * n
+                       for f, n in print_list(p).items() if f != "jam_key")
+        assert volume(KIT, kit) < 0.6 * volume(P, build_parts(P))
+
+    def test_ten_drops_tell_rounded_edges_from_a_welded_seam(self):
+        from make_test_kit import KIT
+        rounded = _score(KIT, ROUND)
+        seam = _score(KIT, Conditions(card_bottom="seam"))
+        per_ten = lambda s: 10 * (s.cards - s.delivered) / s.drops
+        assert per_ten(rounded) < 3
+        assert per_ten(seam) > 5
 
 
 class TestTriedAndRejected:
