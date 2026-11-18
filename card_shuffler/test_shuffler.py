@@ -950,6 +950,11 @@ class TestTriedAndRejected:
             return w.max() - w.min()
         assert spread(replace(P, bin_cant_deg=10.0)) > 0.8 * spread(P)
 
+    def test_a_finer_comb_still_leaves_cards_even_with_the_long_film(self):
+        # 4.5 mm spacing would cut 24 drops to about 22, but brings stray cards back.
+        finer = _score(replace(P, channel_w=3.5, n_channels=22))
+        assert finer.clean <= 14
+
     def test_a_one_layer_blade_tip_is_too_floppy_for_a_tight_deck(self):
         nearly_solid = replace(ROUND, card_t=0.66)
         assert (_score(replace(P, tip_land=0.1, **V9_BLADES), nearly_solid, drops=8).delivered_frac

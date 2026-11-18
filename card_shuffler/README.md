@@ -183,7 +183,8 @@ Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
   shuffle of 100 cards. By the same measure, hand riffles of a 100-card deck
   need about 6: a drop is worth about a quarter of a riffle, because a riffle
   separates neighbouring cards at about every other card and a drop only where
-  a blade cuts. That is set by the seven-card packets; smaller packets
+  a blade cuts. That is set by the seven-card packets; finer combs were tried
+  again with the long film and still left stray cards; smaller packets
   brought the jams back. Restacking habits (turning the deck round, either pile
   on top, cutting) make no difference, and neither would three or four output
   piles: packets go to the piles in a fixed rotation, so extra piles add no
@@ -289,7 +290,7 @@ pip install cadquery mujoco pytest matplotlib
 python shuffler_design.py out     # regenerate STL + STEP
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 143 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 144 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 
@@ -315,5 +316,7 @@ leans on its own, a single leading centre blade, wider blade spacing,
 thinner lower blades, a forward-shifted hopper, a finer comb, blades on the
 outer side of their channels, a second row of short blades halfway down, and
 one-layer (0.1 mm) blade tips, bin floors tilted towards the back, a steeper
-blade roof, a 75 mm blade film, three or four output piles, and a weighted
-plate laid on top of the deck to stop the last cards leaning.
+blade roof, a 75 mm blade film, three or four output piles, a weighted
+plate laid on top of the deck to stop the last cards leaning, and, with the
+long film, finer combs (4.5 and 4.0 mm spacing: about 22 and 19 drops instead
+of 24, but 11 or 12 clean drops in 16 instead of 16).
