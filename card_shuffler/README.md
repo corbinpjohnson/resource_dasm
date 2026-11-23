@@ -300,7 +300,13 @@ and the blade thickens one layer at a time below it. The film is the first
 layer on the bed, so its thickness is your first-layer height: anything from
 0.1 to 0.2 mm works, but a 0.25 mm film (nozzle set too high) lost a card in
 ten from a tight deck in simulation. Use a smooth flexible plate and let it
-cool before peeling the slice off, so the film is not creased. Everything else can
+cool before peeling the slice off, so the film is not creased.
+
+PETG is preferred for the slices, but PLA works: simulated with PLA's
+stiffness (about 75% stiffer), normal and 10%-air decks stay clean in 32
+drops of 32, a nearly solid deck delivers 98.2% (99.1% in PETG), and
+seam-edged cards with rocking clear in 25 drops of 32 (28 in PETG). PLA is
+more brittle, so take extra care peeling the films off the plate. Everything else can
 be 0.2 mm layers in PLA.
 
 ## Assembly
