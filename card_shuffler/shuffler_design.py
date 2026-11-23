@@ -59,8 +59,12 @@ class Params:
     n_channels: int = 18          # must be even: half go left, half right.  No more than the
                                   # deck needs: a narrower collar limits how far a deck can lean
     channel_w: float = 4.0        # gap between blades at the rim, below the taper
-    blade_t: float = 1.0          # full thickness, reached only well down the blade
-    tip_land: float = 0.2         # width of the blade tip: a single layer
+    blade_t: float = 0.95         # full thickness, reached only well down the blade: the film
+                                  # plus eight 0.1 mm layers
+    tip_land: float = 0.15        # the film: one 0.15 mm first layer.  0.15 rather than 0.2 so
+                                  # that a first layer printed 0.05 mm off either way (0.1 to
+                                  # 0.2) still works; a 0.25 mm film lost a card in ten from
+                                  # a tight deck
     bevel_h: float = 80.0         # height over which a blade thickens from film to full thickness.
                                   # With the fan this keeps every channel widening all the way down
     film_h: float = 60.0          # the blade stays one film thick (tip_land) this far down before it

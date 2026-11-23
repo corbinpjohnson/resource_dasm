@@ -43,8 +43,8 @@ back (each is a test in section 9 of `test_shuffler.py`):
   channel gets wider on the way down. With parallel blades the same comb
   delivers 49% of cards.
 - **Each blade is a film at the top and thickens slowly.** The top 60 mm of
-  each blade is a 0.2 mm film; below that it thickens one 0.1 mm layer at a
-  time to 1 mm, 80 mm further down. No channel ever narrows on the way down,
+  each blade is a 0.15 mm film; below that it thickens one 0.1 mm layer at a
+  time to 0.95 mm, 80 mm further down. No channel ever narrows on the way down,
   so whatever the tips let in can fall. Thickening over 20 mm delivered 28%.
 - **Blade faces are flush.** The taper runs right across each blade, ears
   included. A 0.5 mm step there caught cards as they swung out sideways.
@@ -162,6 +162,25 @@ Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
 | 0.20 mm | 24 of 32 |
 | 0.30 mm (fully round) | 32 of 32 |
 
+### Print tolerances
+
+Each dimension below was changed by a realistic printing or assembly error and
+the key conditions rerun (16 drops each). Nominal decks stayed at 16 clean
+drops of 16 in every case, and seam-edged cards with rocking at 99.8% or
+better. Only the nearly solid deck is sensitive, and only to film thickness:
+
+| Error | Tight deck, 6% air |
+|---|---|
+| None (film 0.2 mm, the previous design) | 99.5% |
+| Film printed 0.05 mm too thick (0.25 mm) | 90.8% |
+| Blades 0.1 mm too thick or too thin | 97.4 to 97.9% |
+| Blade gaps 0.2 mm narrower or wider | 96.8 to 98.9% |
+| Fan angle 10% off (slices not pressed together evenly) | 98.8 to 99.7% |
+
+That result moved the film to 0.15 mm, so a first layer 0.05 mm off either
+way stays inside the band that works: printed at 0.1 mm it delivered 99.5%,
+at 0.2 mm 99.8%.
+
 ### Loads
 
 - **Blades.** The film at the top of each blade is checked by the test suite
@@ -192,9 +211,10 @@ Corners rounded to 0.2 mm, the sweep shows, do most of the work too:
 - **Piles need gathering.** Cards land standing in their own lanes, so a
   50-card pile is spread across about 100 mm of a 150 mm-deep bin. Pushing it
   together with a finger through each of the two notches (front and back
-  walls) squares it to 34 to 47 mm in the simulation, with every card staying
-  in the bin and the order almost unchanged (a few neighbouring cards swap,
-  which only adds to the shuffle). Tilting the bin floors did not gather them.
+  walls) gathers about 94% of the cards into a stack in the simulation (8
+  drops); the rest lean against a wall and have to be picked up or pushed in.
+  No card leaves its bin. Tilting the bin floors did not help, and tipping the
+  whole machine gathers only partly even at 70 degrees.
 - **Simulation limits.** Cards are rigid and friction is guessed. Blade-film
   flexibility is modelled as a sprung hinge, which captures bending but not
   buckling or creasing.
@@ -235,7 +255,7 @@ five-card packets) but is less tolerant of tight decks. The model is
 ## Test before you build
 
 The one thing the simulation cannot tell you is how the bottom edges of your
-sleeves behave on a 0.2 mm blade tip. `python make_test_kit.py` exports a
+sleeves behave on a 0.15 mm blade tip. `python make_test_kit.py` exports a
 30-card, 6-channel version to `out_test_kit/`: the same blades, film, fan,
 ramps, bins and hopper, in 28 pieces and about half the plastic.
 
@@ -271,14 +291,16 @@ supports. 40 pieces in all.
 `out/assembly.step` is the whole machine for viewing or editing in CAD.
 
 Settings: 0.4 mm nozzle, 3 perimeters. Print the comb slices with
-`print/comb_slices_prusaslicer.ini` (0.1 mm layers, 0.1 mm first layer, and at
-least 0.6 mm of solid shell top and bottom: with PrusaSlicer's default three
-solid layers the middle of each 1 mm blade is printed as sparse infill; the
-test suite slices a comb slice to check this). Print them in PETG at **0.1 mm
-layers**: the top 60 mm of each blade is a 0.2 mm film that is meant
-to flex, and the blade thickens one layer at a time below it. The film is the
-first two layers on the bed: use a smooth flexible plate and let it cool before
-peeling the slice off, so the film is not creased. Everything else can
+`print/comb_slices_prusaslicer.ini` (0.1 mm layers, a 0.15 mm first layer, and
+at least 0.6 mm of solid shell top and bottom: with PrusaSlicer's default three
+solid layers the middle of each blade is printed as sparse infill; the test
+suite slices a comb slice to check this). Print them in PETG at **0.1 mm
+layers**: the top 60 mm of each blade is a 0.15 mm film that is meant to flex,
+and the blade thickens one layer at a time below it. The film is the first
+layer on the bed, so its thickness is your first-layer height: anything from
+0.1 to 0.2 mm works, but a 0.25 mm film (nozzle set too high) lost a card in
+ten from a tight deck in simulation. Use a smooth flexible plate and let it
+cool before peeling the slice off, so the film is not creased. Everything else can
 be 0.2 mm layers in PLA.
 
 ## Assembly
@@ -313,7 +335,7 @@ python shuffler_design.py out     # regenerate STL + STEP
 python make_test_kit.py           # the 30-card test version, to out_test_kit/
 python render.py .                # regenerate the pictures
 python physics_sim.py 12          # 12 simulated drops, about a minute
-pytest test_shuffler.py           # 147 checks, about an hour on 4 cores
+pytest test_shuffler.py           # 148 checks, about an hour on 4 cores
 pytest test_shuffler.py -k "not Physics and not Limits"    # geometry only, 15 s
 ```
 

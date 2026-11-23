@@ -428,6 +428,21 @@ class Rig:
         else:
             d.qvel[vel_idx] += np.array(action)
 
+    def tip_machine(self, axis: str, deg: float, hold: float = 1.0) -> None:
+        """Tip the whole machine slowly by deg (axis "x": front up for deg > 0), hold, set it down."""
+        mod, d, mj = self.model, self.data, self.mj
+        g0 = mod.opt.gravity.copy()
+        a = math.radians(deg)
+        ca, sa = math.cos(a), math.sin(a)
+        gx, gy, gz = g0
+        if axis == "x":
+            mod.opt.gravity[:] = [gx, ca * gy + sa * gz, -sa * gy + ca * gz]
+        else:
+            mod.opt.gravity[:] = [ca * gx - sa * gz, gy, sa * gx + ca * gz]
+        mj.mj_step(mod, d, int(hold / mod.opt.timestep))
+        mod.opt.gravity[:] = g0
+        mj.mj_step(mod, d, int(0.5 / mod.opt.timestep))
+
     def gather(self, side: str, gap: float, speed: float = 40.0) -> None:
         """Close two fingers on the pile in one bin, through the notches, until they are `gap` mm apart.
 
@@ -438,7 +453,7 @@ class Rig:
         s = p.bin_len / 2 + 2
         n = (p.notch_floor + p.wall_h) / 2
         x, z = p.bin_pt(s, n, side)
-        half = p.depth * p.spread(z) / 2 - 5.0
+        half = p.depth * p.spread(z) / 2 + 3.5        # fingers come in through the notch, from the wall
         c = p.depth / 2
         ids = {end: mod.body_mocapid[mj.mj_name2id(mod, mj.mjtObj.mjOBJ_BODY, f"finger_{side}_{end}")]
                for end in ("front", "back")}
